@@ -1,0 +1,10 @@
+node_modules/
+.env
+.env.*
+!.env.example
+.venv/
+.DS_Store
+dist/
+__pycache__/
+.expo/
+.idea/
