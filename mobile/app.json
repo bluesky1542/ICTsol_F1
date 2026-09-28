@@ -1,0 +1,13 @@
+{
+  "expo": {
+    "name": "ICTsol F1",
+    "slug": "ictsol-f1",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "backgroundColor": "#0f172a"
+    },
+    "assetBundlePatterns": ["**/*"]
+  }
+}
