@@ -7,7 +7,7 @@ export type Task = {
   id: number; title: string; minutes: number; deadline: string | null;
   priority: Level; concentration: Level; place: string; completed: boolean;
 };
-export type Condition = { level: ConditionLevel; updated_at: string };
+export type Condition = { level: ConditionLevel; updated_at: string; expires_at: string };
 export type Activity = {
   id: number; task_id: number | null; task_title: string | null;
   condition_level: ConditionLevel; created_at: string;

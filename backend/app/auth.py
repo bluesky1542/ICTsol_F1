@@ -46,21 +46,33 @@ def current_user(credentials: Annotated[HTTPAuthorizationCredentials | None, Dep
 User = Annotated[dict, Depends(current_user)]
 
 
-def throttle(request, username):
+def attempt_buckets(request, username, scope="login"):
+    ip = request.client.host if request.client else "unknown"
+    return [(hashlib.sha256(f"{scope}:{key}".encode()).hexdigest(), limit)
+            for key, limit in [("ip:" + ip, 60), ("name:" + username, 10)]]
+
+
+def throttle(request, username, scope="login"):
     # 試行回数はDBで管理し、ワーカーをまたいで制限する。転送ヘッダーは信用しない。
     now = time.time()
-    ip = request.client.host if request.client else "unknown"
     blocked = False
     with database() as db:
         lock_auth(db)
         db.execute("DELETE FROM auth_attempts WHERE started_at<?", (now - 900,))
-        for key, limit in [("ip:" + ip, 60), ("name:" + username, 10)]:
-            bucket = hashlib.sha256(key.encode()).hexdigest()
+        for bucket, limit in attempt_buckets(request, username, scope):
             db.execute("INSERT INTO auth_attempts VALUES (?,1,?) ON CONFLICT(bucket) DO UPDATE SET count=auth_attempts.count+1", (bucket, now))
             count = db.execute("SELECT count FROM auth_attempts WHERE bucket=?", (bucket,)).fetchone()["count"]
             blocked = blocked or count > limit
     if blocked:
         raise HTTPException(429, "試行回数が多いため、15分ほど待って再試行してください。")
+
+
+def release_successful_login(request, username):
+    # 成功した今回の試行だけを戻し、同時に発生した失敗の回数は消さない。
+    with database() as db:
+        lock_auth(db)
+        for bucket, _ in attempt_buckets(request, username):
+            db.execute("UPDATE auth_attempts SET count=count-1 WHERE bucket=? AND count>0", (bucket,))
 
 
 def issue(user, response):
@@ -74,7 +86,7 @@ def issue(user, response):
 
 @router.post("/register", status_code=201)
 def register(data: Credentials, request: Request, response: Response):
-    throttle(request, data.username)
+    throttle(request, data.username, "register")
     hashed = password_hash(data.password)
     try:
         with database() as db:
@@ -94,6 +106,7 @@ def login(data: Credentials, request: Request, response: Response):
     valid = hmac.compare_digest(stored, password_hash(data.password, stored.split(":")[0]))
     if not row or not valid:
         raise HTTPException(401, "ユーザー名またはパスワードが違います。")
+    release_successful_login(request, data.username)
     return issue({"id": row["id"], "username": row["username"]}, response)
 
 

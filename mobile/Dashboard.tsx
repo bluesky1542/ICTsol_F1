@@ -56,6 +56,13 @@ export default function Dashboard({ username, logout }: { username: string; logo
   const [selected, setSelected] = useState<number | "rest" | null>(null);
   const [calendarLinked, setCalendarLinked] = useState(false);
   const [useCalendar, setUseCalendar] = useState(true);
+  const [now, setNow] = useState(Date.now());
+  const conditionFresh = !!condition && now < Date.parse(condition.expires_at);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 30000);
+    return () => clearInterval(timer);
+  }, []);
+  useEffect(() => { if (!conditionFresh) invalidate(); }, [conditionFresh]);
 
   async function run(work: () => Promise<void>) {
     if (lock.current) return;
@@ -118,11 +125,12 @@ export default function Dashboard({ username, logout }: { username: string; logo
 
       <View style={s.card}><Text style={s.section}>1. 今の調子</Text>
         <View style={s.row}>{conditions.map(([key, label]) => <Button key={key} title={label} disabled={busy || !connected}
-          selected={condition?.level === key} onPress={() => void run(async () => {
+          selected={conditionFresh && condition?.level === key} onPress={() => void run(async () => {
             const saved = await api<Condition>("/condition", "PUT", { level: key });
-            setCondition(saved); invalidate(); setNotice("今の調子を保存しました。");
+            setCondition(saved); setNow(Date.now()); invalidate(); setNotice("今の調子を保存しました。");
           })} />)}</View>
         <Text style={s.muted}>{condition ? `前回入力：${new Date(condition.updated_at).toLocaleString("ja-JP")}。今の状態に合わせて押し直せます。` : "いずれかを選ぶと保存されます。"}</Text>
+        {condition && !conditionFresh && <Text style={s.error}>今日の調子を選び直してください。日本時間で日付が変わると再入力が必要です。</Text>}
       </View>
 
       <View style={s.card}><Text style={s.section}>2. {editing === null ? "タスクを登録" : "タスクを編集"}</Text>
@@ -141,12 +149,12 @@ export default function Dashboard({ username, logout }: { username: string; logo
       <CalendarPanel disabled={busy || !connected} run={run} changed={linked => { setCalendarLinked(linked); invalidate(); }} />
       <View style={s.card}><Text style={s.section}>3. AIに提案してもらう</Text>
         {calendarLinked && <><Button title={useCalendar ? "✓ 取り込んだ予定を考慮する" : "予定を考慮しない"} selected={useCalendar} disabled={busy}
-          onPress={() => { setUseCalendar(!useCalendar); invalidate(); }} /><Text style={s.muted}>保存済み予定から次の予定までの時間を計算します。変更後は再取り込みしてください。24時間経つと再取り込みが必要です。</Text></>}
+          onPress={() => { setUseCalendar(!useCalendar); invalidate(); }} /><Text style={s.muted}>保存済み予定から次の予定までの時間を計算します。端末から取り込んだ予定は変更後や24時間経過後に再取り込みしてください。手入力の予定にこの制限はありません。</Text></>}
         <Input label="いま使える時間（分）" value={available} set={v => { setAvailable(v); invalidate(); }} numeric disabled={busy} />
         <Input label="いまいる場所" value={currentPlace} set={v => { setCurrentPlace(v); invalidate(); }} placeholder="例：自宅（タスクの場所と一致）" disabled={busy} />
         <Text style={s.muted}>候補タスクの内容・入力した調子・空き時間・場所をOpenAIへ送信します。提案の取得にはAPI利用料金が発生します。</Text>
-        {!aiConfigured && <Text style={s.muted}>AI設定待ちです。backend/.env にAPIキーとモデルを設定してサーバーを再起動してください。</Text>}
-        <Button title={busy ? "処理中…" : "AIの提案を取得"} selected disabled={busy || !connected || !condition || !aiConfigured}
+        {!aiConfigured && <Text style={s.muted}>AI提案は準備中です。タスクや予定の保存は利用できます。</Text>}
+        <Button title={busy ? "処理中…" : "AIの提案を取得"} selected disabled={busy || !connected || !conditionFresh || !aiConfigured}
           onPress={() => void run(async () => {
             invalidate();
             const result = await api<Suggestions>("/recommendations", "POST", { available_minutes: integer(available), place: currentPlace.trim(), use_calendar: calendarLinked && useCalendar });

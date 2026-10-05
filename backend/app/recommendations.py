@@ -7,6 +7,7 @@ from openai import OpenAI, OpenAIError
 from pydantic import ValidationError
 
 from .models import AIResult
+from .usage import reserve_ai_call
 
 CONDITION_LABELS = {
     "slightly_tired": "少し疲れてる",
@@ -17,11 +18,12 @@ CONDITION_LABELS = {
 }
 
 
-def generate(candidates: list[dict], condition: str, minutes: int, place: str) -> AIResult:
+def generate(candidates: list[dict], condition: str, minutes: int, place: str, user_id: int) -> AIResult:
     key = os.getenv("OPENAI_API_KEY", "").strip()
     model = os.getenv("OPENAI_MODEL", "").strip()
     if not key or not model:
-        raise HTTPException(503, "AIが未設定です。backend/.env にAPIキーとモデルを設定してください。")
+        raise HTTPException(503, "AI提案は準備中です。管理者による設定をお待ちください。")
+    reserve_ai_call(user_id)
     try:
         with OpenAI(api_key=key, timeout=25, max_retries=0) as client:
             response = client.responses.parse(
