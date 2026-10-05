@@ -17,6 +17,7 @@ class TaskInput(BaseModel):
 
 
 class Task(TaskInput):
+    model_config = ConfigDict(extra="ignore")
     id: int
     completed: bool
 
@@ -33,6 +34,7 @@ class SuggestionInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     available_minutes: int = Field(ge=1, le=1440)
     place: str = Field(default="", max_length=80)
+    use_calendar: bool = False
 
 
 class AIChoice(BaseModel):

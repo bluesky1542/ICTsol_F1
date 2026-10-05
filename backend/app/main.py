@@ -8,6 +8,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from . import database as storage
 from . import recommendations
+from .auth import User, router as auth_router
+from .calendar import router as calendar_router, free_minutes, get_calendar
 from .models import Condition, SuggestionInput, Task, TaskInput, TaskStatus
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
@@ -19,12 +21,22 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="ICTsol F1 API", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="ICTsol F1 API", version="0.3.0", lifespan=lifespan)
 
-# 開発用Web画面からの接続を許可する。認証導入時は許可元を限定する。
+app.include_router(auth_router)
+app.include_router(calendar_router)
+
+
+@app.middleware("http")
+async def private_responses(request, call_next):
+    response = await call_next(request)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+# 許可するWeb画面を環境変数で指定する。
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:8081,http://127.0.0.1:8081").split(","),
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -42,31 +54,31 @@ def hello() -> dict[str, str]:
 
 
 @app.get("/api/config")
-def config():
+def config(user: User):
     return {"ai_configured": bool(os.getenv("OPENAI_API_KEY", "").strip() and os.getenv("OPENAI_MODEL", "").strip())}
 
 
 @app.get("/api/tasks", response_model=list[Task])
-def list_tasks():
-    return storage.tasks()
+def list_tasks(user: User):
+    return storage.tasks(user["id"])
 
 
 @app.post("/api/tasks", response_model=Task, status_code=201)
-def create_task(task: TaskInput):
-    data = task.model_dump(mode="json")
+def create_task(task: TaskInput, user: User):
+    data = {**task.model_dump(mode="json"), "user_id": user["id"]}
     with storage.database() as db:
         cursor = db.execute(
-            "INSERT INTO tasks (title,minutes,deadline,priority,concentration,place) VALUES (:title,:minutes,:deadline,:priority,:concentration,:place)", data,
+            "INSERT INTO tasks (title,minutes,deadline,priority,concentration,place,user_id) VALUES (:title,:minutes,:deadline,:priority,:concentration,:place,:user_id)", data,
         )
         return dict(db.execute("SELECT * FROM tasks WHERE id=?", (cursor.lastrowid,)).fetchone())
 
 
 @app.put("/api/tasks/{task_id}", response_model=Task)
-def edit_task(task_id: int, task: TaskInput):
+def edit_task(task_id: int, task: TaskInput, user: User):
     with storage.database() as db:
         result = db.execute(
-            "UPDATE tasks SET title=:title,minutes=:minutes,deadline=:deadline,priority=:priority,concentration=:concentration,place=:place WHERE id=:id",
-            {**task.model_dump(mode="json"), "id": task_id},
+            "UPDATE tasks SET title=:title,minutes=:minutes,deadline=:deadline,priority=:priority,concentration=:concentration,place=:place WHERE id=:id AND user_id=:user_id",
+            {**task.model_dump(mode="json"), "id": task_id, "user_id": user["id"]},
         )
         if not result.rowcount:
             raise HTTPException(404, "タスクが見つかりません")
@@ -74,45 +86,51 @@ def edit_task(task_id: int, task: TaskInput):
 
 
 @app.patch("/api/tasks/{task_id}", response_model=Task)
-def update_status(task_id: int, status: TaskStatus):
+def update_status(task_id: int, status: TaskStatus, user: User):
     with storage.database() as db:
-        if not db.execute("UPDATE tasks SET completed=? WHERE id=?", (status.completed, task_id)).rowcount:
+        if not db.execute("UPDATE tasks SET completed=? WHERE id=? AND user_id=?", (status.completed, task_id, user["id"])).rowcount:
             raise HTTPException(404, "タスクが見つかりません")
         return dict(db.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone())
 
 
 @app.get("/api/condition")
-def get_condition():
+def get_condition(user: User):
     with storage.database() as db:
-        row = db.execute("SELECT level, updated_at FROM conditions WHERE id=1").fetchone()
+        row = db.execute("SELECT level, updated_at FROM user_conditions WHERE user_id=?", (user["id"],)).fetchone()
         return dict(row) if row else None
 
 
 @app.put("/api/condition")
-def save_condition(condition: Condition):
+def save_condition(condition: Condition, user: User):
     updated_at = datetime.now(timezone.utc).isoformat()
     with storage.database() as db:
-        db.execute("INSERT INTO conditions VALUES (1,?,?) ON CONFLICT(id) DO UPDATE SET level=excluded.level, updated_at=excluded.updated_at", (condition.level, updated_at))
+        db.execute("INSERT INTO user_conditions VALUES (?,?,?) ON CONFLICT(user_id) DO UPDATE SET level=excluded.level, updated_at=excluded.updated_at", (user["id"], condition.level, updated_at))
     return {"level": condition.level, "updated_at": updated_at}
 
 
 @app.post("/api/recommendations")
-def suggest(context: SuggestionInput):
-    condition = get_condition()
+def suggest(context: SuggestionInput, user: User):
+    condition = get_condition(user)
     if condition is None:
         raise HTTPException(409, "先に今の調子を保存してください。")
-    candidates = [t for t in storage.tasks() if not t["completed"]
-                  and t["minutes"] <= context.available_minutes
+    calendar_before = get_calendar(user) if context.use_calendar else None
+    available = free_minutes(user, context.available_minutes) if context.use_calendar else context.available_minutes
+    candidates = [t for t in storage.tasks(user["id"]) if not t["completed"]
+                  and t["minutes"] <= available
                   and (not t["place"] or t["place"] == context.place)]
     # 入力が肥大化しないよう、締切と優先度順で最大30件を送信する。
     candidates.sort(key=lambda t: (t["deadline"] or "9999-12-31", {"high": 0, "medium": 1, "low": 2}[t["priority"]]))
     candidates = candidates[:30]
     if not candidates:
-        return {"source": "no_candidates", "choices": [], "rest_reason": "今の時間・場所で取り組めるタスクはありません。休息も選べます。"}
-    result = recommendations.generate(candidates, condition["level"], context.available_minutes, context.place)
+        return {"source": "no_candidates", "available_minutes": available, "choices": [], "rest_reason": "今の時間・場所で取り組めるタスクはありません。休息も選べます。"}
+    result = recommendations.generate(candidates, condition["level"], available, context.place)
     # AI処理中に完了・編集されたタスクの古い提案は表示しない。
-    current = {t["id"]: t for t in storage.tasks()}
+    current = {t["id"]: t for t in storage.tasks(user["id"])}
     original = {t["id"]: t for t in candidates}
-    if get_condition() != condition or any(current.get(c.task_id) != original[c.task_id] for c in result.choices):
+    calendar_changed = context.use_calendar and (
+        get_calendar(user) != calendar_before or
+        any(original[c.task_id]["minutes"] > free_minutes(user, context.available_minutes) for c in result.choices)
+    )
+    if calendar_changed or get_condition(user) != condition or any(current.get(c.task_id) != original[c.task_id] for c in result.choices):
         raise HTTPException(409, "入力が更新されました。もう一度提案を取得してください。")
-    return {"source": "ai", "choices": [{"task": Task(**current[c.task_id]), "reason": c.reason} for c in result.choices], "rest_reason": result.rest_reason}
+    return {"source": "ai", "available_minutes": available, "choices": [{"task": Task(**current[c.task_id]), "reason": c.reason} for c in result.choices], "rest_reason": result.rest_reason}

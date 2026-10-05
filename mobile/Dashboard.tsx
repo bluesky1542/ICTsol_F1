@@ -3,6 +3,7 @@ import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { api, Condition, ConditionLevel, Level, Suggestions, Task } from "./api";
+import CalendarPanel from "./CalendarPanel";
 
 const levels: [Level, string][] = [["low", "低"], ["medium", "中"], ["high", "高"]];
 const conditions: [ConditionLevel, string][] = [["good", "元気"], ["normal", "普通"], ["tired", "疲れている"]];
@@ -24,7 +25,7 @@ function Input({ label, value, set, numeric = false, placeholder = "", disabled 
     placeholder={placeholder} placeholderTextColor="#64748b" maxLength={numeric ? 4 : 120} /></View>;
 }
 
-export default function Dashboard() {
+export default function Dashboard({ username, logout }: { username: string; logout: () => Promise<void> }) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [condition, setCondition] = useState<Condition | null>(null);
   const [aiConfigured, setAIConfigured] = useState(false);
@@ -45,6 +46,8 @@ export default function Dashboard() {
   const [currentPlace, setCurrentPlace] = useState("");
   const [suggestions, setSuggestions] = useState<Suggestions | null>(null);
   const [selected, setSelected] = useState<number | "rest" | null>(null);
+  const [calendarLinked, setCalendarLinked] = useState(false);
+  const [useCalendar, setUseCalendar] = useState(true);
 
   async function run(work: () => Promise<void>) {
     if (lock.current) return;
@@ -92,7 +95,8 @@ export default function Dashboard() {
       <Text style={s.heading}>いま、できそうなこと。</Text>
       <Text style={s.muted}>調子と空き時間に合わせて、AIと次の一歩を選びましょう。</Text>
       <View style={s.row}><Button title={busy ? "処理中…" : "最新の状態に更新"} disabled={busy} onPress={() => void run(refresh)} />
-        <Text style={s.muted}>{connected ? "ローカル試作版・1人用" : "サーバーに接続中"}</Text></View>
+        <Text style={s.muted}>{username} さん</Text>
+        <Button title="ログアウト" disabled={busy} onPress={() => void run(logout)} /></View>
       {!!error && <Text accessibilityRole="alert" style={s.error}>{error}</Text>}
       {!!notice && <Text accessibilityLiveRegion="polite" style={s.notice}>{notice}</Text>}
 
@@ -118,7 +122,10 @@ export default function Dashboard() {
           {editing !== null && <Button title="編集をやめる" disabled={busy} onPress={resetForm} />}</View>
       </View>
 
+      <CalendarPanel disabled={busy || !connected} run={run} changed={linked => { setCalendarLinked(linked); invalidate(); }} />
       <View style={s.card}><Text style={s.section}>3. AIに提案してもらう</Text>
+        {calendarLinked && <><Button title={useCalendar ? "✓ 取り込んだ予定を考慮する" : "予定を考慮しない"} selected={useCalendar} disabled={busy}
+          onPress={() => { setUseCalendar(!useCalendar); invalidate(); }} /><Text style={s.muted}>保存済み予定から次の予定までの時間を計算します。変更後は再取り込みしてください。24時間経つと再取り込みが必要です。</Text></>}
         <Input label="いま使える時間（分）" value={available} set={v => { setAvailable(v); invalidate(); }} numeric disabled={busy} />
         <Input label="いまいる場所" value={currentPlace} set={v => { setCurrentPlace(v); invalidate(); }} placeholder="例：自宅（タスクの場所と一致）" disabled={busy} />
         <Text style={s.muted}>候補タスクの内容・入力した調子・空き時間・場所をOpenAIへ送信します。提案の取得にはAPI利用料金が発生します。</Text>
@@ -126,10 +133,10 @@ export default function Dashboard() {
         <Button title={busy ? "処理中…" : "AIの提案を取得"} selected disabled={busy || !connected || !condition || !aiConfigured}
           onPress={() => void run(async () => {
             invalidate();
-            const result = await api<Suggestions>("/recommendations", "POST", { available_minutes: integer(available), place: currentPlace.trim() });
+            const result = await api<Suggestions>("/recommendations", "POST", { available_minutes: integer(available), place: currentPlace.trim(), use_calendar: calendarLinked && useCalendar });
             setSuggestions(result);
           })} />
-        {suggestions && <View style={s.stack}><Text style={s.label}>{suggestions.source === "ai" ? "AIからの候補（どれか1つを選べます）" : "条件に合う候補がありません"}</Text>
+        {suggestions && <View style={s.stack}><Text style={s.muted}>今回考慮した空き時間：{suggestions.available_minutes}分</Text><Text style={s.label}>{suggestions.source === "ai" ? "AIからの候補（どれか1つを選べます）" : "条件に合う候補がありません"}</Text>
           {suggestions.choices.map(({ task, reason }) => <View key={task.id} style={s.suggestion}>
             <Text style={s.taskTitle}>{task.title} · {task.minutes}分</Text><Text style={s.body}>{reason}</Text>
             <Button title={selected === task.id ? "選択中" : "これに取り組む"} selected={selected === task.id} onPress={() => setSelected(task.id)} />

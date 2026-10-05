@@ -16,6 +16,8 @@ class APITest(unittest.TestCase):
         self.env.start()
         self.client = TestClient(app)
         self.client.__enter__()
+        session = self.client.post("/api/auth/register", json={"username": "tester", "password": "test-password-123"}).json()
+        self.client.headers["Authorization"] = "Bearer " + session["token"]
 
     def tearDown(self):
         self.client.__exit__(None, None, None)
@@ -33,6 +35,7 @@ class APITest(unittest.TestCase):
     def test_persistence_edit_completion_and_validation(self):
         task = self.create()
         with TestClient(app) as other:
+            other.headers.update(self.client.headers)
             self.assertEqual(other.get("/api/tasks").json()[0]["id"], task["id"])
         response = self.client.put(f'/api/tasks/{task["id"]}', json={"title": "更新", "minutes": 10})
         self.assertEqual(response.json()["title"], "更新")
