@@ -1,6 +1,6 @@
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -102,7 +102,21 @@ def update_status(task_id: int, status: TaskStatus, user: User):
 def get_condition(user: User):
     with storage.database() as db:
         row = db.execute("SELECT level, updated_at FROM user_conditions WHERE user_id=?", (user["id"],)).fetchone()
-        return dict(row) if row else None
+        if not row:
+            return None
+        result = dict(row)
+        updated = datetime.fromisoformat(result["updated_at"])
+        japan = timezone(timedelta(hours=9))
+        expires = (updated.astimezone(japan) + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        result["expires_at"] = expires.astimezone(timezone.utc).isoformat()
+        return result
+
+
+def require_current_condition(user):
+    condition = get_condition(user)
+    if condition is None or datetime.now(timezone.utc) >= datetime.fromisoformat(condition["expires_at"]):
+        raise HTTPException(409, "今日の調子を選び直してください。")
+    return condition
 
 
 @app.put("/api/condition")
@@ -110,14 +124,12 @@ def save_condition(condition: Condition, user: User):
     updated_at = datetime.now(timezone.utc).isoformat()
     with storage.database() as db:
         db.execute("INSERT INTO user_conditions VALUES (?,?,?) ON CONFLICT(user_id) DO UPDATE SET level=excluded.level, updated_at=excluded.updated_at", (user["id"], condition.level, updated_at))
-    return {"level": condition.level, "updated_at": updated_at}
+    return get_condition(user)
 
 
 @app.post("/api/recommendations")
 def suggest(context: SuggestionInput, user: User):
-    condition = get_condition(user)
-    if condition is None:
-        raise HTTPException(409, "先に今の調子を保存してください。")
+    condition = require_current_condition(user)
     calendar_before = get_calendar(user) if context.use_calendar else None
     available = free_minutes(user, context.available_minutes) if context.use_calendar else context.available_minutes
     candidates = [t for t in storage.tasks(user["id"]) if not t["completed"]
@@ -128,7 +140,8 @@ def suggest(context: SuggestionInput, user: User):
     candidates = candidates[:30]
     if not candidates:
         return {"source": "no_candidates", "available_minutes": available, "choices": [], "rest_reason": "今の時間・場所で取り組めるタスクはありません。休息も選べます。"}
-    result = recommendations.generate(candidates, condition["level"], available, context.place)
+    result = recommendations.generate(candidates, condition["level"], available, context.place, user["id"])
+    require_current_condition(user)
     # AI処理中に完了・編集されたタスクの古い提案は表示しない。
     current = {t["id"]: t for t in storage.tasks(user["id"])}
     original = {t["id"]: t for t in candidates}
@@ -152,6 +165,7 @@ def list_activities(user: User):
 
 @app.post("/api/activities", status_code=201)
 def save_activity(data: ActivityInput, user: User):
+    require_current_condition(user)
     with storage.database() as db:
         condition = db.execute("SELECT level FROM user_conditions WHERE user_id=?", (user["id"],)).fetchone()
         if not condition:

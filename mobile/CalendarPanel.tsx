@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Button, Platform, StyleSheet, Text, TextInput, View } from "react-native";
 import { api } from "./api";
 
-type Snapshot = { sync: { synced_at: string; window_start: string; window_end: string } | null; events: { event_key: string; starts_at: string; ends_at: string }[] };
+type Snapshot = { sync: { synced_at: string; window_start: string; window_end: string; source: "manual" | "imported" } | null; events: { event_key: string; starts_at: string; ends_at: string }[] };
 type Props = { disabled: boolean; run: (work: () => Promise<void>) => Promise<void>; changed: (linked: boolean) => void };
 export default function CalendarPanel({ disabled, run, changed }: Props) {
   const [snapshot, setSnapshot] = useState<Snapshot>({ sync: null, events: [] });
@@ -53,13 +53,7 @@ export default function CalendarPanel({ disabled, run, changed }: Props) {
     const from = new Date(), until = new Date(from.getTime() + 7 * 86400000);
     const begins = parse(start), ends = parse(end);
     if (ends <= begins || ends <= from || begins >= until) throw new Error("これから7日間にかかる予定で、終了を開始より後にしてください。");
-    // 古い画面状態で上書きしないよう、追加の直前に最新の予定を取得する。
-    const latest = await api<Snapshot>("/calendar");
-    const events = latest.events.filter(e => new Date(e.ends_at) > from && new Date(e.starts_at) < until)
-      .map(e => ({ key: e.event_key, starts_at: e.starts_at, ends_at: e.ends_at }));
-    events.push({ key: `manual:${begins.toISOString()}:${ends.toISOString()}`, starts_at: begins.toISOString(), ends_at: ends.toISOString() });
-    const unique = [...new Map(events.map(e => [e.key, e])).values()];
-    update(await api<Snapshot>("/calendar", "PUT", { window_start: from.toISOString(), window_end: until.toISOString(), events: unique })); setStart(""); setEnd("");
+    update(await api<Snapshot>("/calendar/manual", "POST", { starts_at: begins.toISOString(), ends_at: ends.toISOString() })); setStart(""); setEnd("");
   }
   return <View style={s.card}><Text style={s.heading}>カレンダー・予定</Text>
     {!!loadError && <Text accessibilityRole="alert">{loadError}</Text>}
@@ -74,6 +68,7 @@ export default function CalendarPanel({ disabled, run, changed }: Props) {
     <TextInput accessibilityLabel="予定の終了日時" placeholder="2026-10-05T15:00" value={end} onChangeText={setEnd} editable={!disabled} style={s.input} />
     <Button title="予定時間を追加" disabled={disabled} onPress={() => void run(manual)} />
     <Text>{snapshot.sync ? `更新：${new Date(snapshot.sync.synced_at).toLocaleString("ja-JP")} · ${snapshot.events.length}件` : "予定は未連携です。"}</Text>
+    {snapshot.sync?.source === "manual" && <Text>手入力の予定は翌日以降も使えます。24時間ごとの再取り込みは不要です。</Text>}
     {snapshot.events.slice(0, 20).map(e => <Text key={e.event_key}>{new Date(e.starts_at).toLocaleString("ja-JP")} 〜 {new Date(e.ends_at).toLocaleString("ja-JP")}</Text>)}
     {snapshot.events.length > 20 && <Text>ほか {snapshot.events.length - 20}件</Text>}
     {!!snapshot.sync && <Button title="連携解除（サーバーの予定時間を削除）" disabled={disabled} onPress={() => void run(async () => {

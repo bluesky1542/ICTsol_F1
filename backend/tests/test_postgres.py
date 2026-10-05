@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from app.auth import throttle, token_hash
 from app.database import database
 from app.main import app
+from app.usage import reserve_ai_call
 
 
 @unittest.skipUnless(os.getenv("TEST_DATABASE_URL"), "PostgreSQLのテスト用DBは未設定")
@@ -93,3 +94,28 @@ class PostgresTest(unittest.TestCase):
             results = list(executor.map(attempt, range(11)))
         self.assertEqual(results.count(200), 10)
         self.assertEqual(results.count(429), 1)
+
+    def test_ai_quota_and_manual_calendar(self):
+        # 接続先はsetUpで検証した使い捨てのテストDBのみ。
+        with database() as db:
+            db.execute("DELETE FROM ai_usage")
+        def reserve(offset):
+            try:
+                reserve_ai_call(self.user_id + offset)
+                return 200
+            except HTTPException as error:
+                return error.status_code
+        self.user_id = self.client.get("/api/auth/me").json()["id"]
+        with patch.dict(os.environ, {"AI_GLOBAL_DAILY_LIMIT": "2"}), ThreadPoolExecutor(max_workers=4) as executor:
+            results = list(executor.map(reserve, range(6)))
+        self.assertEqual(results.count(200), 2)
+        self.assertEqual(results.count(429), 4)
+        now = datetime.now(timezone.utc)
+        event = {"starts_at": (now + timedelta(hours=1)).isoformat(), "ends_at": (now + timedelta(hours=2)).isoformat()}
+        response = self.client.post("/api/calendar/manual", json=event)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["sync"]["source"], "manual")
+        with database() as db:
+            db.execute("UPDATE calendar_sync SET synced_at=? WHERE user_id=?", ((now - timedelta(days=2)).isoformat(), self.user_id))
+        from app.calendar import free_minutes
+        self.assertEqual(free_minutes({"id": self.user_id}, 30, now), 30)

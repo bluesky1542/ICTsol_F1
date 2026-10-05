@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import AwareDatetime, BaseModel, Field, model_validator
 
 from .auth import User
-from .database import database
+from .database import PostgresDatabase, database
 
 router = APIRouter(prefix="/api/calendar")
 
@@ -41,18 +41,62 @@ class CalendarImport(BaseModel):
         return self
 
 
+def lock_calendar(db, user_id):
+    if isinstance(db, PostgresDatabase):
+        db.execute("SELECT pg_advisory_xact_lock(73120403, ?)", (user_id,))
+    else:
+        db.execute("BEGIN IMMEDIATE")
+
+
+def manual_only(events):
+    return bool(events) and all(e["event_key"].startswith("manual:") for e in events)
+
+
+class ManualEvent(BaseModel):
+    starts_at: AwareDatetime
+    ends_at: AwareDatetime
+
+    @model_validator(mode="after")
+    def check_range(self):
+        now = datetime.now(timezone.utc)
+        if self.ends_at <= self.starts_at or self.ends_at <= now or self.starts_at >= now + timedelta(days=7):
+            raise ValueError("これから7日間にかかる予定で、終了を開始より後にしてください。")
+        return self
+
+
 @router.get("")
 def get_calendar(user: User):
     with database() as db:
         sync = db.execute("SELECT synced_at,window_start,window_end FROM calendar_sync WHERE user_id=?", (user["id"],)).fetchone()
         events = [dict(r) for r in db.execute("SELECT event_key,starts_at,ends_at FROM calendar_events WHERE user_id=? ORDER BY starts_at", (user["id"],))]
-    return {"sync": dict(sync) if sync else None, "events": events}
+    return {"sync": {**dict(sync), "source": "manual" if manual_only(events) else "imported"} if sync else None, "events": events}
+
+
+@router.post("/manual")
+def add_manual_event(data: ManualEvent, user: User):
+    now = datetime.now(timezone.utc)
+    starts, ends = iso(data.starts_at), iso(data.ends_at)
+    with database() as db:
+        lock_calendar(db, user["id"])
+        events = [dict(r) for r in db.execute("SELECT event_key FROM calendar_events WHERE user_id=?", (user["id"],))]
+        sync = db.execute("SELECT user_id FROM calendar_sync WHERE user_id=?", (user["id"],)).fetchone()
+        key = f"manual:{starts}:{ends}"
+        if len(events) >= 2000 and not any(e["event_key"] == key for e in events):
+            raise HTTPException(409, "保存できる予定は2,000件までです。")
+        db.execute("INSERT INTO calendar_events VALUES (?,?,?,?) ON CONFLICT(user_id,event_key) DO NOTHING",
+                   (user["id"], key, starts, ends))
+        # 端末からの取り込みが含まれる場合、その同期日時を手入力で延長しない。
+        if not sync or manual_only(events):
+            db.execute("INSERT INTO calendar_sync VALUES (?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET synced_at=excluded.synced_at,window_start=excluded.window_start,window_end=excluded.window_end",
+                       (user["id"], iso(now), iso(now), iso(now + timedelta(days=7))))
+    return get_calendar(user)
 
 
 @router.put("")
 def import_calendar(data: CalendarImport, user: User):
     # 端末カレンダーへの書き込みは行わず、本人の取り込み済みスナップショットのみ更新する。
     with database() as db:
+        lock_calendar(db, user["id"])
         db.execute("DELETE FROM calendar_events WHERE user_id=?", (user["id"],))
         db.executemany("INSERT INTO calendar_events VALUES (?,?,?,?)", [(user["id"], e.key, iso(e.starts_at), iso(e.ends_at)) for e in data.events])
         db.execute("INSERT INTO calendar_sync VALUES (?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET synced_at=excluded.synced_at,window_start=excluded.window_start,window_end=excluded.window_end", (user["id"], iso(datetime.now(timezone.utc)), iso(data.window_start), iso(data.window_end)))
@@ -62,6 +106,7 @@ def import_calendar(data: CalendarImport, user: User):
 @router.delete("")
 def disconnect(user: User):
     with database() as db:
+        lock_calendar(db, user["id"])
         db.execute("DELETE FROM calendar_events WHERE user_id=?", (user["id"],))
         db.execute("DELETE FROM calendar_sync WHERE user_id=?", (user["id"],))
     return {"message": "取り込んだ予定を解除しました。端末の予定は変更していません。"}
@@ -71,11 +116,14 @@ def free_minutes(user, limit, now=None):
     now = now or datetime.now(timezone.utc)
     data = get_calendar(user)
     sync = data["sync"]
-    if not sync or not datetime.fromisoformat(sync["window_start"]) <= now < datetime.fromisoformat(sync["window_end"]):
+    manual = manual_only(data["events"])
+    if not sync or (not manual and not datetime.fromisoformat(sync["window_start"]) <= now < datetime.fromisoformat(sync["window_end"])):
         raise HTTPException(409, "カレンダーの同期範囲が古くなっています。再度取り込んでください。")
-    if now - datetime.fromisoformat(sync["synced_at"]) > timedelta(hours=24):
+    if not manual and now - datetime.fromisoformat(sync["synced_at"]) > timedelta(hours=24):
         raise HTTPException(409, "予定の取り込みから24時間以上経過しています。再度取り込んでください。")
-    end = min(now + timedelta(minutes=limit), datetime.fromisoformat(sync["window_end"]))
+    end = now + timedelta(minutes=limit)
+    if not manual:
+        end = min(end, datetime.fromisoformat(sync["window_end"]))
     for event in data["events"]:
         start, finish = datetime.fromisoformat(event["starts_at"]), datetime.fromisoformat(event["ends_at"])
         if start <= now < finish:
