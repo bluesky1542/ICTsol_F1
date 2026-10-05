@@ -17,7 +17,7 @@ from app.auth import token_hash
 class AccountsCalendarTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.env = patch.dict(os.environ, {"DATABASE_PATH": self.temp.name + "/test.sqlite3"})
+        self.env = patch.dict(os.environ, {"REQUIRE_DATABASE_URL": "0", "DATABASE_URL": "", "DATABASE_PATH": self.temp.name + "/test.sqlite3"})
         self.env.start()
         self.client = TestClient(app)
         self.client.__enter__()
@@ -101,6 +101,38 @@ class AccountsCalendarTest(unittest.TestCase):
         self.assertEqual(len(self.client.get("/api/calendar").json()["events"]), 1)
         self.client.delete("/api/calendar")
         self.assertEqual(self.client.get("/api/calendar").json(), {"sync": None, "events": []})
+
+    def test_activity_history_is_private_and_keeps_original_details(self):
+        task = self.client.post("/api/tasks", json={"title": "選択したタスク", "minutes": 20}).json()
+        self.client.put("/api/condition", json={"level": "slightly_tired"})
+        saved = self.client.post("/api/activities", json={"task_id": task["id"]})
+        self.assertEqual(saved.status_code, 201)
+        self.assertNotIn("user_id", saved.json())
+        self.client.put(f'/api/tasks/{task["id"]}', json={"title": "変更後", "minutes": 20})
+        self.client.put("/api/condition", json={"level": "good"})
+        rest = self.client.post("/api/activities", json={"task_id": None})
+        self.assertEqual(rest.status_code, 201)
+        history = self.client.get("/api/activities").json()
+        self.assertIsNone(history[0]["task_id"])
+        self.assertEqual(history[1]["task_title"], "選択したタスク")
+        self.assertEqual(history[1]["condition_level"], "slightly_tired")
+        self.client.headers["Authorization"] = "Bearer " + self.b["token"]
+        self.client.put("/api/condition", json={"level": "normal"})
+        self.assertEqual(self.client.get("/api/activities").json(), [])
+        self.assertEqual(self.client.post("/api/activities", json={"task_id": task["id"]}).status_code, 404)
+        self.client.headers.pop("Authorization")
+        self.assertEqual(self.client.get("/api/activities").status_code, 401)
+        self.assertEqual(self.client.post("/api/activities", json={"task_id": None}).status_code, 401)
+
+    def test_activity_rejects_missing_condition_and_completed_tasks(self):
+        self.assertEqual(self.client.post("/api/activities", json={"task_id": None}).status_code, 409)
+        self.client.put("/api/condition", json={"level": "normal"})
+        task = self.client.post("/api/tasks", json={"title": "完了済み", "minutes": 20}).json()
+        self.client.patch(f'/api/tasks/{task["id"]}', json={"completed": True})
+        self.assertEqual(self.client.post("/api/activities", json={"task_id": task["id"]}).status_code, 409)
+        self.assertEqual(self.client.post("/api/activities", json={}).status_code, 422)
+        self.assertEqual(self.client.post("/api/activities", json={"task_id": 0}).status_code, 422)
+        self.assertEqual(self.client.get("/api/activities").json(), [])
 
     def test_free_time_and_busy_ai_skipped(self):
         now = datetime.now(timezone.utc)

@@ -6,11 +6,12 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from . import database as storage
 from . import recommendations
 from .auth import User, router as auth_router
 from .calendar import router as calendar_router, free_minutes, get_calendar
-from .models import Condition, SuggestionInput, Task, TaskInput, TaskStatus
+from .models import ActivityInput, Condition, SuggestionInput, Task, TaskInput, TaskStatus
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
@@ -45,6 +46,11 @@ app.add_middleware(
 
 @app.get("/api/health")
 def health_check() -> dict[str, str]:
+    try:
+        with storage.database() as db:
+            db.execute("SELECT 1")
+    except storage.DatabaseErrors:
+        raise HTTPException(503, "保存先に接続できません。時間をおいて再試行してください。") from None
     return {"status": "ok", "message": "バックエンドは正常に動作しています"}
 
 
@@ -67,10 +73,9 @@ def list_tasks(user: User):
 def create_task(task: TaskInput, user: User):
     data = {**task.model_dump(mode="json"), "user_id": user["id"]}
     with storage.database() as db:
-        cursor = db.execute(
-            "INSERT INTO tasks (title,minutes,deadline,priority,concentration,place,user_id) VALUES (:title,:minutes,:deadline,:priority,:concentration,:place,:user_id)", data,
-        )
-        return dict(db.execute("SELECT * FROM tasks WHERE id=?", (cursor.lastrowid,)).fetchone())
+        return dict(db.execute(
+            "INSERT INTO tasks (title,minutes,deadline,priority,concentration,place,user_id) VALUES (:title,:minutes,:deadline,:priority,:concentration,:place,:user_id) RETURNING *", data,
+        ).fetchone())
 
 
 @app.put("/api/tasks/{task_id}", response_model=Task)
@@ -88,7 +93,7 @@ def edit_task(task_id: int, task: TaskInput, user: User):
 @app.patch("/api/tasks/{task_id}", response_model=Task)
 def update_status(task_id: int, status: TaskStatus, user: User):
     with storage.database() as db:
-        if not db.execute("UPDATE tasks SET completed=? WHERE id=? AND user_id=?", (status.completed, task_id, user["id"])).rowcount:
+        if not db.execute("UPDATE tasks SET completed=? WHERE id=? AND user_id=?", (int(status.completed), task_id, user["id"])).rowcount:
             raise HTTPException(404, "タスクが見つかりません")
         return dict(db.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone())
 
@@ -134,3 +139,39 @@ def suggest(context: SuggestionInput, user: User):
     if calendar_changed or get_condition(user) != condition or any(current.get(c.task_id) != original[c.task_id] for c in result.choices):
         raise HTTPException(409, "入力が更新されました。もう一度提案を取得してください。")
     return {"source": "ai", "available_minutes": available, "choices": [{"task": Task(**current[c.task_id]), "reason": c.reason} for c in result.choices], "rest_reason": result.rest_reason}
+
+
+@app.get("/api/activities")
+def list_activities(user: User):
+    with storage.database() as db:
+        return [dict(row) for row in db.execute(
+            "SELECT id,task_id,task_title,condition_level,created_at FROM activities WHERE user_id=? ORDER BY id DESC LIMIT 50",
+            (user["id"],),
+        )]
+
+
+@app.post("/api/activities", status_code=201)
+def save_activity(data: ActivityInput, user: User):
+    with storage.database() as db:
+        condition = db.execute("SELECT level FROM user_conditions WHERE user_id=?", (user["id"],)).fetchone()
+        if not condition:
+            raise HTTPException(409, "先に今の調子を保存してください。")
+        title = None
+        if data.task_id is not None:
+            task = db.execute("SELECT title,completed FROM tasks WHERE id=? AND user_id=?", (data.task_id, user["id"])).fetchone()
+            if not task:
+                raise HTTPException(404, "タスクが見つかりません")
+            if task["completed"]:
+                raise HTTPException(409, "完了済みのタスクです。最新の状態に更新してください。")
+            title = task["title"]
+        # 選択時のタスク名と調子を残し、後日の編集で履歴が変わらないようにする。
+        return dict(db.execute(
+            "INSERT INTO activities (user_id,task_id,task_title,condition_level,created_at) VALUES (?,?,?,?,?) RETURNING id,task_id,task_title,condition_level,created_at",
+            (user["id"], data.task_id, title, condition["level"], datetime.now(timezone.utc).isoformat()),
+        ).fetchone())
+
+
+# 公開用に書き出した画面を、APIと同じURLで配信する。
+web_dist = os.getenv("WEB_DIST_PATH", "").strip()
+if web_dist:
+    app.mount("/", StaticFiles(directory=web_dist, html=True), name="web")

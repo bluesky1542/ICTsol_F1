@@ -30,6 +30,11 @@ class Condition(BaseModel):
     level: Literal["good", "slightly_good", "normal", "slightly_tired", "tired"]
 
 
+class ActivityInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    task_id: int | None = Field(ge=1)
+
+
 class SuggestionInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     available_minutes: int = Field(ge=1, le=1440)
