@@ -4,6 +4,7 @@ import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { api, Condition, ConditionLevel, Level, Suggestions, Task } from "./api";
 import CalendarPanel from "./CalendarPanel";
+import { isDemo } from "./demo";
 
 const levels: [Level, string][] = [["low", "低"], ["medium", "中"], ["high", "高"]];
 const conditions: [ConditionLevel, string][] = [
@@ -100,6 +101,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
       <Text style={s.eyebrow}>ICTsol F1 · 毎日を、自分のペースで</Text>
       <Text style={s.heading}>いま、できそうなこと。</Text>
       <Text style={s.muted}>調子と空き時間に合わせて、AIと次の一歩を選びましょう。</Text>
+      {isDemo && <Text style={s.muted}>画面確認用デモ：タスクはサンプルです。データの保存・AIの実行は行いません。</Text>}
       <View style={s.row}><Button title={busy ? "処理中…" : "最新の状態に更新"} disabled={busy} onPress={() => void run(refresh)} />
         <Text style={s.muted}>{username} さん</Text>
         <Button title="ログアウト" disabled={busy} onPress={() => void run(logout)} /></View>

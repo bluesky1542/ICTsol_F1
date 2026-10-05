@@ -1,0 +1,42 @@
+name: Publish demo to GitHub Pages
+on:
+  push:
+    branches: [main]
+    paths: ["mobile/**", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - run: npm ci
+        working-directory: mobile
+      - run: npm run typecheck
+        working-directory: mobile
+      - run: npx expo export --platform web
+        working-directory: mobile
+        env:
+          EXPO_PUBLIC_DEMO_MODE: "1"
+          EXPO_PUBLIC_API_BASE_URL: "/"
+          EXPO_WEB_BASE_URL: "/ICTsol_F1"
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: mobile/dist
+      - uses: actions/deploy-pages@v4
+        id: deployment

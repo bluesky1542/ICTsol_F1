@@ -1,4 +1,5 @@
 import { Platform } from "react-native";
+import { demoResponse, isDemo } from "./demo";
 
 export type Level = "low" | "medium" | "high";
 export type ConditionLevel = "good" | "slightly_good" | "normal" | "slightly_tired" | "tired";
@@ -24,7 +25,8 @@ export function setSession(value: string | null) { token = value; }
 export function onExpired(callback: (() => void) | null) { expired = callback; }
 
 export async function api<T>(path: string, method = "GET", body?: unknown): Promise<T> {
-  if (!base) throw new Error("mobile/.env に接続先を設定してください。");
+  if (isDemo) return demoResponse(path, method) as T;
+  if (!base && Platform.OS !== "web") throw new Error("mobile/.env に接続先を設定してください。");
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 35000);
   const requestToken = token;

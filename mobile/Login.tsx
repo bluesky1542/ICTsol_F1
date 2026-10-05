@@ -3,6 +3,7 @@ import { Button, ScrollView, StyleSheet, Text, TextInput, View } from "react-nat
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import Dashboard from "./Dashboard";
 import { api, onExpired, setSession } from "./api";
+import { isDemo } from "./demo";
 
 export default function Login() {
   const [user, setUser] = useState<{ id: number; username: string } | null>(null);
@@ -34,6 +35,7 @@ export default function Login() {
     await api("/auth/logout", "POST");
     setSession(null); setUser(null); setPassword(""); setConfirm(""); setError("");
   }
+  if (isDemo) return <Dashboard username="画面確認用デモ" logout={async () => { window.location.href = window.location.pathname; }} />;
   if (user) return <Dashboard key={user.id} username={user.username} logout={logout} />;
   return <SafeAreaProvider><SafeAreaView style={s.root}><ScrollView contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
     <View style={s.card}><Text style={s.heading}>{register ? "アカウント作成" : "おかえりなさい"}</Text>
