@@ -6,7 +6,13 @@ import { api, Condition, ConditionLevel, Level, Suggestions, Task } from "./api"
 import CalendarPanel from "./CalendarPanel";
 
 const levels: [Level, string][] = [["low", "低"], ["medium", "中"], ["high", "高"]];
-const conditions: [ConditionLevel, string][] = [["good", "元気"], ["normal", "普通"], ["tired", "疲れている"]];
+const conditions: [ConditionLevel, string][] = [
+  ["slightly_tired", "少し疲れてる"],
+  ["tired", "疲れてる"],
+  ["normal", "普通"],
+  ["slightly_good", "少し元気"],
+  ["good", "元気"],
+];
 
 function Button({ title, onPress, disabled = false, selected = false }: {
   title: string; onPress: () => void; disabled?: boolean; selected?: boolean;

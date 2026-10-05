@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 import unittest
@@ -31,6 +32,27 @@ class APITest(unittest.TestCase):
 
     def ready(self):
         self.client.put("/api/condition", json={"level": "tired"})
+
+    def test_five_conditions_persist_and_reach_ai(self):
+        self.create()
+        labels = {
+            "slightly_tired": "少し疲れてる", "tired": "疲れてる",
+            "normal": "普通", "slightly_good": "少し元気", "good": "元気",
+        }
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test", "OPENAI_MODEL": "test-model"}), patch("app.recommendations.OpenAI") as client:
+            parse = client.return_value.__enter__.return_value.responses.parse
+            parse.return_value = SimpleNamespace(status="completed", output_parsed=AIResult(choices=[], rest_reason="休息も選べます"))
+            for level, label in labels.items():
+                with self.subTest(level=level):
+                    self.assertEqual(self.client.put("/api/condition", json={"level": level}).status_code, 200)
+                    self.assertEqual(self.client.get("/api/condition").json()["level"], level)
+                    response = self.client.post("/api/recommendations", json={"available_minutes": 30})
+                    self.assertEqual(response.status_code, 200, response.text)
+                    payload = json.loads(parse.call_args.kwargs["input"])
+                    self.assertEqual(payload["condition"], level)
+                    self.assertEqual(payload["condition_label"], label)
+        self.assertEqual(self.client.put("/api/condition", json={"level": "unknown"}).status_code, 422)
+        self.assertEqual(self.client.get("/api/condition").json()["level"], "good")
 
     def test_persistence_edit_completion_and_validation(self):
         task = self.create()

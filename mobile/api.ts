@@ -1,7 +1,7 @@
 import { Platform } from "react-native";
 
 export type Level = "low" | "medium" | "high";
-export type ConditionLevel = "good" | "normal" | "tired";
+export type ConditionLevel = "good" | "slightly_good" | "normal" | "slightly_tired" | "tired";
 export type Task = {
   id: number; title: string; minutes: number; deadline: string | null;
   priority: Level; concentration: Level; place: string; completed: boolean;

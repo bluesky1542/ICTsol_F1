@@ -8,6 +8,14 @@ from pydantic import ValidationError
 
 from .models import AIResult
 
+CONDITION_LABELS = {
+    "slightly_tired": "少し疲れてる",
+    "tired": "疲れてる",
+    "normal": "普通",
+    "slightly_good": "少し元気",
+    "good": "元気",
+}
+
 
 def generate(candidates: list[dict], condition: str, minutes: int, place: str) -> AIResult:
     key = os.getenv("OPENAI_API_KEY", "").strip()
@@ -30,6 +38,7 @@ def generate(candidates: list[dict], condition: str, minutes: int, place: str) -
                 input=json.dumps({
                     "now": datetime.now(timezone.utc).isoformat(),
                     "condition": condition, "available_minutes": minutes,
+                    "condition_label": CONDITION_LABELS[condition],
                     "place": place, "tasks": candidates,
                 }, ensure_ascii=False),
                 text_format=AIResult,

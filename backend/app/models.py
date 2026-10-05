@@ -27,7 +27,7 @@ class TaskStatus(BaseModel):
 
 
 class Condition(BaseModel):
-    level: Literal["good", "normal", "tired"]
+    level: Literal["good", "slightly_good", "normal", "slightly_tired", "tired"]
 
 
 class SuggestionInput(BaseModel):
