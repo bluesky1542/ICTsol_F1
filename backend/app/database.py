@@ -32,8 +32,35 @@ def initialize():
                 level TEXT NOT NULL, updated_at TEXT NOT NULL
             );
         """)
+        # 既存の匿名データは所有者を推測せず保持し、ログイン利用者には公開しない。
+        if "user_id" not in {row[1] for row in db.execute("PRAGMA table_info(tasks)")}:
+            db.execute("ALTER TABLE tasks ADD COLUMN user_id INTEGER")
+        db.executescript("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS sessions (
+                token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL, expires_at REAL NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS auth_attempts (
+                bucket TEXT PRIMARY KEY, count INTEGER NOT NULL, started_at REAL NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS user_conditions (
+                user_id INTEGER PRIMARY KEY, level TEXT NOT NULL, updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS calendar_events (
+                user_id INTEGER NOT NULL, event_key TEXT NOT NULL,
+                starts_at TEXT NOT NULL, ends_at TEXT NOT NULL,
+                PRIMARY KEY (user_id, event_key)
+            );
+            CREATE TABLE IF NOT EXISTS calendar_sync (
+                user_id INTEGER PRIMARY KEY, synced_at TEXT NOT NULL,
+                window_start TEXT NOT NULL, window_end TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS tasks_owner ON tasks(user_id);
+        """)
 
 
-def tasks():
+def tasks(user_id):
     with database() as db:
-        return [dict(row) for row in db.execute("SELECT * FROM tasks ORDER BY completed, id DESC")]
+        return [dict(row) for row in db.execute("SELECT * FROM tasks WHERE user_id=? ORDER BY completed, id DESC", (user_id,))]

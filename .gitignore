@@ -9,3 +9,5 @@ __pycache__/
 .expo/
 .idea/
 backend/data/
+mobile/ios/
+mobile/android/

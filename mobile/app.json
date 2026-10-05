@@ -8,6 +8,10 @@
     "splash": {
       "backgroundColor": "#0f172a"
     },
-    "assetBundlePatterns": ["**/*"]
+    "assetBundlePatterns": ["**/*"],
+    "plugins": [["expo-calendar", {
+      "calendarPermission": "空き時間に合うタスクを提案するため、選択したカレンダーの予定時間を読み取ります。",
+      "remindersPermission": false
+    }]]
   }
 }
