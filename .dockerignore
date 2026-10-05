@@ -1,0 +1,11 @@
+.git
+**/node_modules
+**/.venv
+**/.env
+**/.env.*
+**/data
+**/dist
+**/.expo
+**/__pycache__
+mobile/ios
+mobile/android

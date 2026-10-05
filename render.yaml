@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: ictsol-f1
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: REQUIRE_DATABASE_URL
+        value: "1"
+      - key: DATABASE_URL
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        sync: false

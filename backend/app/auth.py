@@ -1,7 +1,6 @@
 import hashlib
 import hmac
 import secrets
-import sqlite3
 import time
 from typing import Annotated
 
@@ -9,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, field_validator
 
-from .database import database
+from .database import IntegrityErrors, database, lock_auth
 
 router = APIRouter(prefix="/api/auth")
 bearer = HTTPBearer(auto_error=False)
@@ -53,12 +52,12 @@ def throttle(request, username):
     ip = request.client.host if request.client else "unknown"
     blocked = False
     with database() as db:
-        db.execute("BEGIN IMMEDIATE")
+        lock_auth(db)
         db.execute("DELETE FROM auth_attempts WHERE started_at<?", (now - 900,))
         for key, limit in [("ip:" + ip, 60), ("name:" + username, 10)]:
             bucket = hashlib.sha256(key.encode()).hexdigest()
-            db.execute("INSERT INTO auth_attempts VALUES (?,1,?) ON CONFLICT(bucket) DO UPDATE SET count=count+1", (bucket, now))
-            count = db.execute("SELECT count FROM auth_attempts WHERE bucket=?", (bucket,)).fetchone()[0]
+            db.execute("INSERT INTO auth_attempts VALUES (?,1,?) ON CONFLICT(bucket) DO UPDATE SET count=auth_attempts.count+1", (bucket, now))
+            count = db.execute("SELECT count FROM auth_attempts WHERE bucket=?", (bucket,)).fetchone()["count"]
             blocked = blocked or count > limit
     if blocked:
         raise HTTPException(429, "試行回数が多いため、15分ほど待って再試行してください。")
@@ -79,9 +78,9 @@ def register(data: Credentials, request: Request, response: Response):
     hashed = password_hash(data.password)
     try:
         with database() as db:
-            cursor = db.execute("INSERT INTO users (username,password_hash) VALUES (?,?)", (data.username, hashed))
-            user = {"id": cursor.lastrowid, "username": data.username}
-    except sqlite3.IntegrityError:
+            row = db.execute("INSERT INTO users (username,password_hash) VALUES (?,?) RETURNING id", (data.username, hashed)).fetchone()
+            user = {"id": row["id"], "username": data.username}
+    except IntegrityErrors:
         raise HTTPException(409, "そのユーザー名は使用できません。") from None
     return issue(user, response)
 

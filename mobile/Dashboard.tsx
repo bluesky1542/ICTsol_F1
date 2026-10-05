@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
-import { api, Condition, ConditionLevel, Level, Suggestions, Task } from "./api";
+import { Activity, api, Condition, ConditionLevel, Level, Suggestions, Task } from "./api";
 import CalendarPanel from "./CalendarPanel";
 import { isDemo } from "./demo";
 
@@ -34,6 +34,7 @@ function Input({ label, value, set, numeric = false, placeholder = "", disabled 
 
 export default function Dashboard({ username, logout }: { username: string; logout: () => Promise<void> }) {
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [activities, setActivities] = useState<Activity[]>([]);
   const [condition, setCondition] = useState<Condition | null>(null);
   const [aiConfigured, setAIConfigured] = useState(false);
   const [connected, setConnected] = useState(false);
@@ -67,9 +68,11 @@ export default function Dashboard({ username, logout }: { username: string; logo
   }
   function invalidate() { setSuggestions(null); setSelected(null); }
   async function refresh() {
-    const [nextTasks, nextCondition, config] = await Promise.all([
+    const [nextTasks, nextCondition, config, nextActivities] = await Promise.all([
       api<Task[]>("/tasks"), api<Condition | null>("/condition"), api<{ ai_configured: boolean }>("/config"),
+      api<Activity[]>("/activities"),
     ]);
+    setActivities(nextActivities);
     setTasks(nextTasks); setCondition(nextCondition); setAIConfigured(config.ai_configured); setConnected(true); invalidate();
   }
   useEffect(() => { void run(refresh); }, []);
@@ -95,6 +98,11 @@ export default function Dashboard({ username, logout }: { username: string; logo
     resetForm(); invalidate(); setNotice("タスクを保存しました。");
   }
   const levelLabel = (value: Level) => levels.find(([key]) => key === value)?.[1];
+  async function choose(taskId: number | null) {
+    const saved = await api<Activity>("/activities", "POST", { task_id: taskId });
+    setActivities(previous => [saved, ...previous].slice(0, 50));
+    setSelected(taskId ?? "rest"); setNotice("選択を履歴に保存しました。");
+  }
 
   return <SafeAreaProvider><SafeAreaView style={s.root}><StatusBar style="dark" />
     <ScrollView ref={scroll} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
@@ -147,11 +155,11 @@ export default function Dashboard({ username, logout }: { username: string; logo
         {suggestions && <View style={s.stack}><Text style={s.muted}>今回考慮した空き時間：{suggestions.available_minutes}分</Text><Text style={s.label}>{suggestions.source === "ai" ? "AIからの候補（どれか1つを選べます）" : "条件に合う候補がありません"}</Text>
           {suggestions.choices.map(({ task, reason }) => <View key={task.id} style={s.suggestion}>
             <Text style={s.taskTitle}>{task.title} · {task.minutes}分</Text><Text style={s.body}>{reason}</Text>
-            <Button title={selected === task.id ? "選択中" : "これに取り組む"} selected={selected === task.id} onPress={() => setSelected(task.id)} />
+            <Button title={selected === task.id ? "選択中" : "これに取り組む"} selected={selected === task.id} disabled={busy || isDemo || selected === task.id} onPress={() => void run(() => choose(task.id))} />
           </View>)}
           <View style={s.suggestion}><Text style={s.taskTitle}>ひと休みする</Text><Text style={s.body}>{suggestions.rest_reason}</Text>
-            <Button title={selected === "rest" ? "休息を選択中" : "休息を選ぶ"} selected={selected === "rest"} onPress={() => setSelected("rest")} /></View>
-          <Text style={s.muted}>選択はこの画面内のみです。終わったタスクは下の一覧で「完了にする」を押してください。</Text>
+            <Button title={selected === "rest" ? "休息を選択中" : "休息を選ぶ"} selected={selected === "rest"} disabled={busy || isDemo || selected === "rest"} onPress={() => void run(() => choose(null))} /></View>
+          <Text style={s.muted}>選択は履歴に保存されます。終わったタスクは下の一覧で「完了にする」を押してください。</Text>
         </View>}
       </View>
 
@@ -170,6 +178,14 @@ export default function Dashboard({ username, logout }: { username: string; logo
             scroll.current?.scrollTo({ y: 0, animated: true });
           }} /></View>
         </View>)}
+      </View>
+      <View style={s.card}><Text style={s.section}>取り組み・休息の履歴</Text>
+        {!activities.length && <Text style={s.muted}>タスクや休息を選ぶと、ここに記録されます。</Text>}
+        {activities.map(activity => <View key={activity.id} style={s.task}>
+          <Text style={s.taskTitle}>{activity.task_title ?? "ひと休みする"}</Text>
+          <Text style={s.muted}>{new Date(activity.created_at).toLocaleString("ja-JP")} · {conditions.find(([key]) => key === activity.condition_level)?.[1]}</Text>
+        </View>)}
+        {!!activities.length && <Text style={s.muted}>直近50件を表示しています。記録は選択の履歴で、実行・完了の確認ではありません。</Text>}
       </View>
     </ScrollView>
   </SafeAreaView></SafeAreaProvider>;

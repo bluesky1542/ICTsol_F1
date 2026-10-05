@@ -1,0 +1,17 @@
+services:
+  app:
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"
+    env_file:
+      - path: backend/.env
+        required: false
+    environment:
+      DATABASE_PATH: /app/data/app.sqlite3
+      WEB_DIST_PATH: /app/web
+      PORT: "8000"
+    volumes:
+      - app-data:/app/data
+    restart: unless-stopped
+volumes:
+  app-data:

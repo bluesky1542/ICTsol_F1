@@ -15,6 +15,7 @@ export function demoResponse(path: string, method: string): unknown {
   if (method !== "GET") throw new Error("画面確認用のデモです。登録・変更はログインしてお試しください。");
   switch (path) {
     case "/tasks": return tasks;
+    case "/activities": return [];
     case "/condition": return { level: "normal", updated_at: new Date().toISOString() };
     case "/config": return { ai_configured: false };
     case "/calendar": return { sync: null, events: [] };

@@ -8,6 +8,10 @@ export type Task = {
   priority: Level; concentration: Level; place: string; completed: boolean;
 };
 export type Condition = { level: ConditionLevel; updated_at: string };
+export type Activity = {
+  id: number; task_id: number | null; task_title: string | null;
+  condition_level: ConditionLevel; created_at: string;
+};
 export type Suggestions = {
   available_minutes: number;
   source: "ai" | "no_candidates";

@@ -13,7 +13,7 @@ from app.models import AIChoice, AIResult
 class APITest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.env = patch.dict(os.environ, {"DATABASE_PATH": self.temp.name + "/test.sqlite3", "OPENAI_API_KEY": "", "OPENAI_MODEL": ""})
+        self.env = patch.dict(os.environ, {"REQUIRE_DATABASE_URL": "0", "DATABASE_URL": "", "DATABASE_PATH": self.temp.name + "/test.sqlite3", "OPENAI_API_KEY": "", "OPENAI_MODEL": ""})
         self.env.start()
         self.client = TestClient(app)
         self.client.__enter__()
