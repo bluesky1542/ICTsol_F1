@@ -11,6 +11,7 @@ from . import database as storage
 from . import recommendations
 from .auth import User, router as auth_router
 from .calendar import router as calendar_router, free_minutes, get_calendar
+from .reflections import router as reflections_router
 from .models import ActivityInput, Condition, SuggestionInput, Task, TaskInput, TaskStatus
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
@@ -26,6 +27,7 @@ app = FastAPI(title="ICTsol F1 API", version="0.3.0", lifespan=lifespan)
 
 app.include_router(auth_router)
 app.include_router(calendar_router)
+app.include_router(reflections_router)
 
 
 @app.middleware("http")

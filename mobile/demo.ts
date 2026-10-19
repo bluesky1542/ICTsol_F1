@@ -16,6 +16,7 @@ export function demoResponse(path: string, method: string): unknown {
   switch (path) {
     case "/tasks": return tasks;
     case "/activities": return [];
+    case "/reflections": return [];
     case "/condition": return { level: "normal", updated_at: new Date().toISOString(), expires_at: new Date(Date.now() + 86400000).toISOString() };
     case "/config": return { ai_configured: false };
     case "/calendar": return { sync: null, events: [] };

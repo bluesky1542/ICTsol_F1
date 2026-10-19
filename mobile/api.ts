@@ -12,6 +12,11 @@ export type Activity = {
   id: number; task_id: number | null; task_title: string | null;
   condition_level: ConditionLevel; created_at: string;
 };
+export type Achievement = "done" | "partial" | "not_done";
+export type Reflection = {
+  day: string; achievement: Achievement; satisfaction: number;
+  tiredness: ConditionLevel; comment: string; updated_at: string;
+};
 export type Suggestions = {
   available_minutes: number;
   source: "ai" | "no_candidates";

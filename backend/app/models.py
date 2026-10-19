@@ -4,6 +4,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 Level = Literal["low", "medium", "high"]
+ConditionLevel = Literal["good", "slightly_good", "normal", "slightly_tired", "tired"]
 
 
 class TaskInput(BaseModel):
@@ -27,7 +28,15 @@ class TaskStatus(BaseModel):
 
 
 class Condition(BaseModel):
-    level: Literal["good", "slightly_good", "normal", "slightly_tired", "tired"]
+    level: ConditionLevel
+
+
+class ReflectionInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    achievement: Literal["done", "partial", "not_done"]
+    satisfaction: int = Field(ge=1, le=5)
+    tiredness: ConditionLevel
+    comment: str = Field(default="", max_length=200)
 
 
 class ActivityInput(BaseModel):

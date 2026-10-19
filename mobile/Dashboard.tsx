@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
-import { Activity, api, Condition, ConditionLevel, Level, Suggestions, Task } from "./api";
+import { Achievement, Activity, api, Condition, ConditionLevel, Level, Reflection, Suggestions, Task } from "./api";
 import CalendarPanel from "./CalendarPanel";
 import { isDemo } from "./demo";
 
@@ -14,6 +14,10 @@ const conditions: [ConditionLevel, string][] = [
   ["slightly_good", "少し元気"],
   ["good", "元気"],
 ];
+const achievements: [Achievement, string][] = [["done", "できた"], ["partial", "途中まで"], ["not_done", "できなかった"]];
+const satisfactions = [1, 2, 3, 4, 5];
+// サーバーと同じく日本時間の日付で「今日」を判定する。
+const japanToday = (time: number) => new Date(time + 9 * 3600000).toISOString().slice(0, 10);
 
 function Button({ title, onPress, disabled = false, selected = false }: {
   title: string; onPress: () => void; disabled?: boolean; selected?: boolean;
@@ -56,7 +60,13 @@ export default function Dashboard({ username, logout }: { username: string; logo
   const [selected, setSelected] = useState<number | "rest" | null>(null);
   const [calendarLinked, setCalendarLinked] = useState(false);
   const [useCalendar, setUseCalendar] = useState(true);
+  const [reflections, setReflections] = useState<Reflection[]>([]);
+  const [achievement, setAchievement] = useState<Achievement | null>(null);
+  const [satisfaction, setSatisfaction] = useState<number | null>(null);
+  const [tiredness, setTiredness] = useState<ConditionLevel | null>(null);
+  const [comment, setComment] = useState("");
   const [now, setNow] = useState(Date.now());
+  const todayReflection = reflections.find(r => r.day === japanToday(now));
   const conditionFresh = !!condition && now < Date.parse(condition.expires_at);
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30000);
@@ -75,11 +85,15 @@ export default function Dashboard({ username, logout }: { username: string; logo
   }
   function invalidate() { setSuggestions(null); setSelected(null); }
   async function refresh() {
-    const [nextTasks, nextCondition, config, nextActivities] = await Promise.all([
+    const [nextTasks, nextCondition, config, nextActivities, nextReflections] = await Promise.all([
       api<Task[]>("/tasks"), api<Condition | null>("/condition"), api<{ ai_configured: boolean }>("/config"),
-      api<Activity[]>("/activities"),
+      api<Activity[]>("/activities"), api<Reflection[]>("/reflections"),
     ]);
-    setActivities(nextActivities);
+    setActivities(nextActivities); setReflections(nextReflections);
+    // 今日の回答があればフォームに読み込み、答え直せるようにする。
+    const current = nextReflections.find(r => r.day === japanToday(Date.now()));
+    setAchievement(current?.achievement ?? null); setSatisfaction(current?.satisfaction ?? null);
+    setTiredness(current?.tiredness ?? null); setComment(current?.comment ?? "");
     setTasks(nextTasks); setCondition(nextCondition); setAIConfigured(config.ai_configured); setConnected(true); invalidate();
   }
   useEffect(() => { void run(refresh); }, []);
@@ -110,6 +124,13 @@ export default function Dashboard({ username, logout }: { username: string; logo
     setActivities(previous => [saved, ...previous].slice(0, 50));
     setSelected(taskId ?? "rest"); setNotice("選択を履歴に保存しました。");
   }
+  async function saveReflection() {
+    if (!achievement || !satisfaction || !tiredness) throw new Error("振り返りの3つの質問すべてに答えてください。");
+    const saved = await api<Reflection>("/reflections/today", "PUT", { achievement, satisfaction, tiredness, comment: comment.trim() });
+    setReflections(previous => [saved, ...previous.filter(r => r.day !== saved.day)].slice(0, 14));
+    setNotice("今日の振り返りを保存しました。おつかれさまでした。");
+  }
+  const label = <T,>(options: [T, string][], value: T) => options.find(([key]) => key === value)?.[1];
 
   return <SafeAreaProvider><SafeAreaView style={s.root}><StatusBar style="dark" />
     <ScrollView ref={scroll} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
@@ -194,6 +215,30 @@ export default function Dashboard({ username, logout }: { username: string; logo
           <Text style={s.muted}>{new Date(activity.created_at).toLocaleString("ja-JP")} · {conditions.find(([key]) => key === activity.condition_level)?.[1]}</Text>
         </View>)}
         {!!activities.length && <Text style={s.muted}>直近50件を表示しています。記録は選択の履歴で、実行・完了の確認ではありません。</Text>}
+      </View>
+
+      <View style={s.card}><Text style={s.section}>4. 今日の振り返り</Text>
+        <Text style={s.muted}>1日の終わりに答えてください。1日1回分を保存し、同じ日なら答え直せます。</Text>
+        <Text style={s.label}>今日のタスクはできましたか？</Text>
+        <View style={s.row}>{achievements.map(([key, text]) => <Button key={key} title={text} selected={achievement === key}
+          disabled={busy || isDemo} onPress={() => setAchievement(key)} />)}</View>
+        <Text style={s.label}>AIの提案は役に立ちましたか？（1：立たなかった〜5：とても役立った）</Text>
+        <View style={s.row}>{satisfactions.map(value => <Button key={value} title={String(value)} selected={satisfaction === value}
+          disabled={busy || isDemo} onPress={() => setSatisfaction(value)} />)}</View>
+        <Text style={s.label}>今の疲れ具合は？</Text>
+        <View style={s.row}>{conditions.map(([key, text]) => <Button key={key} title={text} selected={tiredness === key}
+          disabled={busy || isDemo} onPress={() => setTiredness(key)} />)}</View>
+        <View style={s.field}><Text style={s.label}>ひとこと（任意・200文字まで）</Text>
+          <TextInput accessibilityLabel="ひとこと" style={s.input} value={comment} onChangeText={setComment} editable={!busy && !isDemo}
+            placeholder="例：午前中は集中できた" placeholderTextColor="#64748b" maxLength={200} multiline /></View>
+        <Button title={todayReflection ? "振り返りを更新" : "振り返りを保存"} selected disabled={busy || !connected || isDemo}
+          onPress={() => void run(saveReflection)} />
+        {todayReflection && <Text style={s.muted}>今日の分は保存済みです（{new Date(todayReflection.updated_at).toLocaleString("ja-JP")}）。</Text>}
+        {reflections.filter(r => r !== todayReflection).slice(0, 7).map(r => <View key={r.day} style={s.task}>
+          <Text style={s.taskTitle}>{r.day}</Text>
+          <Text style={s.muted}>タスク {label(achievements, r.achievement)} · 提案 {r.satisfaction}/5 · 疲れ {label(conditions, r.tiredness)}</Text>
+          {!!r.comment && <Text style={s.body}>{r.comment}</Text>}
+        </View>)}
       </View>
     </ScrollView>
   </SafeAreaView></SafeAreaProvider>;
