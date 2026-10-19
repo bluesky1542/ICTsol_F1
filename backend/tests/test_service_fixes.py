@@ -39,6 +39,10 @@ class ServiceFixesTest(unittest.TestCase):
             self.assertEqual(self.client.post("/api/auth/login", json=wrong).status_code, 401)
         self.assertEqual(self.client.post("/api/auth/login", json=wrong).status_code, 429)
 
+    def test_password_minimum_is_eight_characters(self):
+        self.assertEqual(self.client.post("/api/auth/register", json={"username": "short_pw", "password": "a" * 7}).status_code, 422)
+        self.assertEqual(self.client.post("/api/auth/register", json={"username": "eight_pw", "password": "a" * 8}).status_code, 201)
+
     def test_failed_attempts_survive_success(self):
         wrong = {**self.credentials, "password": "wrong-password-123"}
         for _ in range(9):

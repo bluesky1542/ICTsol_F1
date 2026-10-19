@@ -20,8 +20,8 @@ export default function Login() {
   async function submit() {
     if (busy) return;
     setError("");
-    if (!/^[a-zA-Z0-9_-]{3,40}$/.test(username.trim()) || password.length < 12 || password.length > 128) {
-      setError("ユーザー名は英数字・_・- の3〜40文字、パスワードは12〜128文字です。"); return;
+    if (!/^[a-zA-Z0-9_-]{3,40}$/.test(username.trim()) || password.length < 8 || password.length > 128) {
+      setError("ユーザー名は英数字・_・- の3〜40文字、パスワードは8〜128文字です。"); return;
     }
     if (register && password !== confirm) { setError("確認用パスワードが一致しません。"); return; }
     setBusy(true);
@@ -42,7 +42,7 @@ export default function Login() {
       <Text>自分のタスクと予定を管理しましょう。</Text>
       <Text>ユーザー名（英数字・_・-、3〜40文字）</Text>
       <TextInput accessibilityLabel="ユーザー名" value={username} onChangeText={setUsername} autoCapitalize="none" autoCorrect={false} editable={!busy} maxLength={40} style={s.input} />
-      <Text>パスワード（12〜128文字）</Text>
+      <Text>パスワード（8〜128文字）</Text>
       <TextInput accessibilityLabel="パスワード" value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" editable={!busy} maxLength={128} style={s.input} />
       {register && <><Text>パスワード（確認）</Text><TextInput accessibilityLabel="パスワード（確認）" value={confirm} onChangeText={setConfirm} secureTextEntry editable={!busy} maxLength={128} style={s.input} /></>}
       {!!error && <Text accessibilityRole="alert" style={s.error}>{error}</Text>}
