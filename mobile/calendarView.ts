@@ -32,6 +32,22 @@ export function dayIsCovered(sync: CalendarSync | null, day: Date): boolean {
   return new Date(sync.window_start) <= from && new Date(sync.window_end) >= until;
 }
 
+// 手入力の日時を端末の現地時刻として解釈する。区切りは「-」「/」、日付と時刻の間は空白か「T」を受け付ける。
+// 日本語入力で混ざりやすい全角の数字・記号・空白も半角に直して扱う。不正な場合は null を返す。
+export function parseLocalDateTime(text: string): Date | null {
+  const normalized = text.trim()
+    .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xfee0))
+    .replace(/[／－ー]/g, c => (c === "／" ? "/" : "-")).replace(/：/g, ":").replace(/　/g, " ");
+  const match = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:\s+|T)(\d{1,2}):(\d{2})$/.exec(normalized);
+  if (!match) return null;
+  const [year, month, day, hour, minute] = match.slice(1).map(Number);
+  const value = new Date(year, month - 1, day, hour, minute);
+  // 2月30日や25時のように繰り上がる日時は、実在しないものとして扱う。
+  if (value.getFullYear() !== year || value.getMonth() !== month - 1 || value.getDate() !== day
+    || value.getHours() !== hour || value.getMinutes() !== minute) return null;
+  return value;
+}
+
 export function eventTime(event: DayEvent, day: Date): string {
   const [from, until] = dayBounds(day);
   const time = (value: Date) => `${String(value.getHours()).padStart(2, "0")}:${String(value.getMinutes()).padStart(2, "0")}`;

@@ -3,7 +3,7 @@ import { Button, Platform, StyleSheet, Text, TextInput, View } from "react-nativ
 import { api } from "./api";
 import GoogleCalendarLink from "./GoogleCalendarLink";
 import ScheduleCalendar from "./ScheduleCalendar";
-import type { CalendarSnapshot } from "./calendarView";
+import { parseLocalDateTime, type CalendarSnapshot } from "./calendarView";
 
 type Snapshot = CalendarSnapshot;
 type Props = { disabled: boolean; run: (work: () => Promise<void>) => Promise<void>; changed: (linked: boolean) => void };
@@ -14,6 +14,7 @@ export default function CalendarPanel({ disabled, run, changed }: Props) {
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [loadError, setLoadError] = useState("");
+  const [manualMessage, setManualMessage] = useState<{ error: boolean; text: string } | null>(null);
   function update(value: Snapshot) { setSnapshot(value); changed(!!value.sync); }
   useEffect(() => {
     let active = true;
@@ -45,18 +46,17 @@ export default function CalendarPanel({ disabled, run, changed }: Props) {
     update(await api<Snapshot>("/calendar", "PUT", { window_start: from.toISOString(), window_end: until.toISOString(), events: [...unique.values()] }));
   }
   async function manual() {
-    const parse = (text: string) => {
-      if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(text)) throw new Error("日時は YYYY-MM-DDTHH:mm で入力してください。");
-      const value = new Date(text);
-      if (Number.isNaN(value.getTime())) throw new Error("日時が不正です。");
-      const [year, month, day, hour, minute] = text.split(/[-T:]/).map(Number);
-      if (value.getFullYear() !== year || value.getMonth() + 1 !== month || value.getDate() !== day || value.getHours() !== hour || value.getMinutes() !== minute) throw new Error("実在する日時を入力してください。");
+    const parse = (text: string, label: string) => {
+      const value = parseLocalDateTime(text);
+      if (!value) throw new Error(`${label}は「2026-10-20 14:00」の形で、実在する日時を入力してください。`);
       return value;
     };
     const from = new Date(), until = new Date(from.getTime() + 7 * 86400000);
-    const begins = parse(start), ends = parse(end);
-    if (ends <= begins || ends <= from || begins >= until) throw new Error("これから7日間にかかる予定で、終了を開始より後にしてください。");
+    const begins = parse(start, "開始"), ends = parse(end, "終了");
+    if (ends <= begins) throw new Error("終了は開始より後の日時にしてください。");
+    if (ends <= from || begins >= until) throw new Error("追加できるのは、今から7日以内にかかる予定です。");
     update(await api<Snapshot>("/calendar/manual", "POST", { starts_at: begins.toISOString(), ends_at: ends.toISOString() })); setStart(""); setEnd("");
+    setManualMessage({ error: false, text: `予定を追加しました（${begins.toLocaleString("ja-JP")}〜）。上のカレンダーに表示されます。` });
   }
   return <View style={s.card}><Text style={s.heading}>カレンダー・予定</Text>
     <ScheduleCalendar snapshot={snapshot} />
@@ -69,9 +69,17 @@ export default function CalendarPanel({ disabled, run, changed }: Props) {
     {!!calendars.length && <><Text>取り込むと、このアカウントの保存済み予定（手入力も含む）を選択カレンダーの今後7日分で置き換えます。終日の予定は終日を予定ありとして扱います。</Text>
       <Button title="選択した予定を取り込む" disabled={disabled || !selected.length} onPress={() => void run(sync)} /></>}
     <Text>手入力（端末の現地時刻）</Text>
-    <TextInput accessibilityLabel="予定の開始日時" placeholder="2026-10-05T14:00" value={start} onChangeText={setStart} editable={!disabled} style={s.input} />
-    <TextInput accessibilityLabel="予定の終了日時" placeholder="2026-10-05T15:00" value={end} onChangeText={setEnd} editable={!disabled} style={s.input} />
-    <Button title="予定時間を追加" disabled={disabled} onPress={() => void run(manual)} />
+    <Text style={s.hint}>例：2026-10-20 14:00（「/」区切りや全角数字でも入力できます。今から7日以内の予定が対象です）</Text>
+    <TextInput accessibilityLabel="予定の開始日時" placeholder="開始 例：2026-10-20 14:00" value={start} onChangeText={setStart} editable={!disabled} style={s.input} />
+    <TextInput accessibilityLabel="予定の終了日時" placeholder="終了 例：2026-10-20 15:00" value={end} onChangeText={setEnd} editable={!disabled} style={s.input} />
+    {/* 入力欄のそばに結果を出し、画面上部のエラーに気づかず失敗する状態を防ぐ。 */}
+    <Button title="予定時間を追加" disabled={disabled} onPress={() => void run(async () => {
+      setManualMessage(null);
+      try { await manual(); }
+      catch (e) { setManualMessage({ error: true, text: e instanceof Error ? e.message : "予定を追加できませんでした。" }); }
+    })} />
+    {manualMessage && <Text accessibilityRole={manualMessage.error ? "alert" : undefined} accessibilityLiveRegion="polite"
+      style={manualMessage.error ? s.error : s.success}>{manualMessage.text}</Text>}
     <Text>{snapshot.sync ? `更新：${new Date(snapshot.sync.synced_at).toLocaleString("ja-JP")} · ${snapshot.events.length}件` : "予定は未連携です。"}</Text>
     {snapshot.sync?.source === "manual" && <Text>手入力の予定は翌日以降も使えます。24時間ごとの再取り込みは不要です。</Text>}
     {!!snapshot.sync && <Button title="連携解除（サーバーの予定時間を削除）" disabled={disabled} onPress={() => void run(async () => {
@@ -79,4 +87,7 @@ export default function CalendarPanel({ disabled, run, changed }: Props) {
     })} />}
   </View>;
 }
-const s = StyleSheet.create({ card: { backgroundColor: "white", padding: 20, borderRadius: 18, gap: 14 }, heading: { fontSize: 20, fontWeight: "700", color: "#183c32" }, input: { borderWidth: 1, borderColor: "#bdcec7", borderRadius: 8, padding: 12, fontSize: 16 } });
+const s = StyleSheet.create({ card: { backgroundColor: "white", padding: 20, borderRadius: 18, gap: 14 }, heading: { fontSize: 20, fontWeight: "700", color: "#183c32" }, input: { borderWidth: 1, borderColor: "#bdcec7", borderRadius: 8, padding: 12, fontSize: 16 },
+  hint: { color: "#52645e", fontSize: 13, lineHeight: 20 },
+  error: { padding: 12, backgroundColor: "#fff0ed", color: "#9a2920", borderRadius: 10 },
+  success: { padding: 12, backgroundColor: "#deeee4", color: "#234e3d", borderRadius: 10 } });

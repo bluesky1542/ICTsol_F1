@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { dayBounds, dayIsCovered, dayKey, eventsForDay, eventTime, monthDays } from "../calendarView.ts";
+import { dayBounds, dayIsCovered, dayKey, eventsForDay, eventTime, monthDays, parseLocalDateTime } from "../calendarView.ts";
 
 const at = (day, hour = 0, minute = 0) => new Date(2026, 9, day, hour, minute);
 const event = (key, start, end) => ({ event_key: key, starts_at: start.toISOString(), ends_at: end.toISOString() });
@@ -76,5 +76,20 @@ test("夏時間切り替えの日も現地の翌日0時を境界とする", () =
     const entry = event("dst", from, until);
     assert.equal(eventTime(eventsForDay([entry], day)[0], day), "終日（00:00〜24:00）");
     assert.equal(eventsForDay([entry], until).length, 0);
+  }
+});
+
+test("手入力の日時は空白・T・スラッシュ区切りや全角でも現地時刻として読み取る", () => {
+  for (const text of ["2026-10-20 14:05", "2026-10-20T14:05", "2026/10/20 14:05", "2026/10/20  14:05 ",
+    "２０２６／１０／２０　１４：０５", "2026-10-20 14:05".replace("-", "－")]) {
+    assert.equal(parseLocalDateTime(text)?.getTime(), new Date(2026, 9, 20, 14, 5).getTime(), text);
+  }
+  assert.equal(parseLocalDateTime("2026/1/5 9:00")?.getTime(), new Date(2026, 0, 5, 9, 0).getTime());
+});
+
+test("形式違いや実在しない日時は null を返す", () => {
+  for (const text of ["", "14:00", "2026-10-20", "10/20 14:00", "2026-02-30 10:00", "2026-10-20 25:00",
+    "2026-10-20 14:60", "2026-10-20 14:5", "2026-10-20 14:00:00", "明日 14:00"]) {
+    assert.equal(parseLocalDateTime(text), null, text);
   }
 });
