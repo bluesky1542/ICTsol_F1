@@ -60,3 +60,51 @@ class ReflectionTest(unittest.TestCase):
         del self.client.headers["Authorization"]
         self.assertEqual(self.client.get("/api/reflections").status_code, 401)
         self.assertEqual(self.client.put("/api/reflections/today", json=self.answer).status_code, 401)
+
+    def test_empty_summary(self):
+        with patch("app.reflections.today", return_value="2026-10-19"):
+            response = self.client.get("/api/reflections/summary")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), {
+            "from": "2026-10-13", "to": "2026-10-19", "answered_days": 0,
+            "achievement": {"done": 0, "partial": 0, "not_done": 0}, "average_satisfaction": None,
+        })
+
+    def test_summary_includes_only_seven_calendar_days_and_latest_answers(self):
+        for day, achievement, satisfaction in [
+            ("2026-10-12", "not_done", 1), ("2026-10-13", "done", 5),
+            ("2026-10-17", "partial", 3), ("2026-10-19", "not_done", 2), ("2026-10-20", "done", 5),
+        ]:
+            with patch("app.reflections.today", return_value=day):
+                self.client.put("/api/reflections/today", json={
+                    **self.answer, "achievement": achievement, "satisfaction": satisfaction,
+                })
+        with patch("app.reflections.today", return_value="2026-10-19"):
+            summary = self.client.get("/api/reflections/summary").json()
+            self.assertEqual(summary["answered_days"], 3)
+            self.assertEqual(summary["achievement"], {"done": 1, "partial": 1, "not_done": 1})
+            self.assertEqual(summary["average_satisfaction"], 3.3)
+            self.client.put("/api/reflections/today", json={**self.answer, "achievement": "done", "satisfaction": 4})
+            updated = self.client.get("/api/reflections/summary").json()
+            self.assertEqual(updated["answered_days"], 3)
+            self.assertEqual(updated["achievement"], {"done": 2, "partial": 1, "not_done": 0})
+            self.assertEqual(updated["average_satisfaction"], 4.0)
+
+    def test_summary_changes_at_japan_midnight(self):
+        with patch("app.reflections.today", return_value="2026-10-13"):
+            self.client.put("/api/reflections/today", json=self.answer)
+        for instant, start, end, count in [
+            (datetime(2026, 10, 19, 14, 59, tzinfo=timezone.utc), "2026-10-13", "2026-10-19", 1),
+            (datetime(2026, 10, 19, 15, 0, tzinfo=timezone.utc), "2026-10-14", "2026-10-20", 0),
+        ]:
+            with self.subTest(instant=instant), patch("app.reflections.datetime") as clock:
+                clock.now.return_value = instant
+                summary = self.client.get("/api/reflections/summary").json()
+                self.assertEqual((summary["from"], summary["to"], summary["answered_days"]), (start, end, count))
+
+    def test_summary_is_private_and_requires_login(self):
+        self.client.put("/api/reflections/today", json=self.answer)
+        self.login("summary_other_user")
+        self.assertEqual(self.client.get("/api/reflections/summary").json()["answered_days"], 0)
+        del self.client.headers["Authorization"]
+        self.assertEqual(self.client.get("/api/reflections/summary").status_code, 401)

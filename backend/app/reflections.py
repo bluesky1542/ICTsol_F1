@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter
 
@@ -34,3 +34,21 @@ def save_today(data: ReflectionInput, user: User):
             (user["id"], today(), data.achievement, data.satisfaction, data.tiredness, data.comment,
              datetime.now(timezone.utc).isoformat()),
         ).fetchone())
+
+
+@router.get("/summary")
+def reflection_summary(user: User):
+    end = today()
+    start = (date.fromisoformat(end) - timedelta(days=6)).isoformat()
+    with database() as db:
+        rows = db.execute(
+            "SELECT achievement,satisfaction FROM reflections WHERE user_id=? AND day>=? AND day<=?",
+            (user["id"], start, end),
+        ).fetchall()
+    achievement = {"done": 0, "partial": 0, "not_done": 0}
+    for row in rows:
+        achievement[row["achievement"]] += 1
+    return {
+        "from": start, "to": end, "answered_days": len(rows), "achievement": achievement,
+        "average_satisfaction": round(sum(row["satisfaction"] for row in rows) / len(rows), 1) if rows else None,
+    }

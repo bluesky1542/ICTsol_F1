@@ -1,8 +1,11 @@
 import { useEffect, useState } from "react";
 import { Button, Platform, StyleSheet, Text, TextInput, View } from "react-native";
 import { api } from "./api";
+import GoogleCalendarLink from "./GoogleCalendarLink";
+import ScheduleCalendar from "./ScheduleCalendar";
+import type { CalendarSnapshot } from "./calendarView";
 
-type Snapshot = { sync: { synced_at: string; window_start: string; window_end: string; source: "manual" | "imported" } | null; events: { event_key: string; starts_at: string; ends_at: string }[] };
+type Snapshot = CalendarSnapshot;
 type Props = { disabled: boolean; run: (work: () => Promise<void>) => Promise<void>; changed: (linked: boolean) => void };
 export default function CalendarPanel({ disabled, run, changed }: Props) {
   const [snapshot, setSnapshot] = useState<Snapshot>({ sync: null, events: [] });
@@ -56,6 +59,8 @@ export default function CalendarPanel({ disabled, run, changed }: Props) {
     update(await api<Snapshot>("/calendar/manual", "POST", { starts_at: begins.toISOString(), ends_at: ends.toISOString() })); setStart(""); setEnd("");
   }
   return <View style={s.card}><Text style={s.heading}>カレンダー・予定</Text>
+    <ScheduleCalendar snapshot={snapshot} />
+    <GoogleCalendarLink />
     {!!loadError && <Text accessibilityRole="alert">{loadError}</Text>}
     <Button title="保存済み予定を再読み込み" disabled={disabled} onPress={() => void run(async () => { update(await api<Snapshot>("/calendar")); setLoadError(""); })} />
     <Text>選択した予定の開始・終了時刻のみサーバーへ送信します。タイトル・説明・参加者は送信しません。取り込みはボタン操作時のみです。</Text>
@@ -69,8 +74,6 @@ export default function CalendarPanel({ disabled, run, changed }: Props) {
     <Button title="予定時間を追加" disabled={disabled} onPress={() => void run(manual)} />
     <Text>{snapshot.sync ? `更新：${new Date(snapshot.sync.synced_at).toLocaleString("ja-JP")} · ${snapshot.events.length}件` : "予定は未連携です。"}</Text>
     {snapshot.sync?.source === "manual" && <Text>手入力の予定は翌日以降も使えます。24時間ごとの再取り込みは不要です。</Text>}
-    {snapshot.events.slice(0, 20).map(e => <Text key={e.event_key}>{new Date(e.starts_at).toLocaleString("ja-JP")} 〜 {new Date(e.ends_at).toLocaleString("ja-JP")}</Text>)}
-    {snapshot.events.length > 20 && <Text>ほか {snapshot.events.length - 20}件</Text>}
     {!!snapshot.sync && <Button title="連携解除（サーバーの予定時間を削除）" disabled={disabled} onPress={() => void run(async () => {
       await api("/calendar", "DELETE"); update({ sync: null, events: [] }); setSelected([]); setCalendars([]);
     })} />}

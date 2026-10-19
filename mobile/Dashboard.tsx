@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
-import { Achievement, Activity, api, Condition, ConditionLevel, Level, Reflection, Suggestions, Task } from "./api";
+import { Achievement, Activity, api, Condition, ConditionLevel, Level, Reflection, ReflectionSummary, Suggestions, Task } from "./api";
 import CalendarPanel from "./CalendarPanel";
 import { isDemo } from "./demo";
 
@@ -61,18 +61,24 @@ export default function Dashboard({ username, logout }: { username: string; logo
   const [calendarLinked, setCalendarLinked] = useState(false);
   const [useCalendar, setUseCalendar] = useState(true);
   const [reflections, setReflections] = useState<Reflection[]>([]);
+  const [reflectionSummary, setReflectionSummary] = useState<ReflectionSummary | null>(null);
   const [achievement, setAchievement] = useState<Achievement | null>(null);
   const [satisfaction, setSatisfaction] = useState<number | null>(null);
   const [tiredness, setTiredness] = useState<ConditionLevel | null>(null);
   const [comment, setComment] = useState("");
   const [now, setNow] = useState(Date.now());
-  const todayReflection = reflections.find(r => r.day === japanToday(now));
+  const reflectionDay = japanToday(now);
+  const todayReflection = reflections.find(r => r.day === reflectionDay);
   const conditionFresh = !!condition && now < Date.parse(condition.expires_at);
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30000);
     return () => clearInterval(timer);
   }, []);
   useEffect(() => { if (!conditionFresh) invalidate(); }, [conditionFresh]);
+  useEffect(() => {
+    setAchievement(todayReflection?.achievement ?? null); setSatisfaction(todayReflection?.satisfaction ?? null);
+    setTiredness(todayReflection?.tiredness ?? null); setComment(todayReflection?.comment ?? "");
+  }, [reflectionDay, todayReflection]);
 
   async function run(work: () => Promise<void>) {
     if (lock.current) return;
@@ -85,15 +91,12 @@ export default function Dashboard({ username, logout }: { username: string; logo
   }
   function invalidate() { setSuggestions(null); setSelected(null); }
   async function refresh() {
-    const [nextTasks, nextCondition, config, nextActivities, nextReflections] = await Promise.all([
+    const [nextTasks, nextCondition, config, nextActivities, nextReflections, nextSummary] = await Promise.all([
       api<Task[]>("/tasks"), api<Condition | null>("/condition"), api<{ ai_configured: boolean }>("/config"),
       api<Activity[]>("/activities"), api<Reflection[]>("/reflections"),
+      api<ReflectionSummary>("/reflections/summary"),
     ]);
-    setActivities(nextActivities); setReflections(nextReflections);
-    // 今日の回答があればフォームに読み込み、答え直せるようにする。
-    const current = nextReflections.find(r => r.day === japanToday(Date.now()));
-    setAchievement(current?.achievement ?? null); setSatisfaction(current?.satisfaction ?? null);
-    setTiredness(current?.tiredness ?? null); setComment(current?.comment ?? "");
+    setNow(Date.now()); setActivities(nextActivities); setReflections(nextReflections); setReflectionSummary(nextSummary);
     setTasks(nextTasks); setCondition(nextCondition); setAIConfigured(config.ai_configured); setConnected(true); invalidate();
   }
   useEffect(() => { void run(refresh); }, []);
@@ -125,10 +128,17 @@ export default function Dashboard({ username, logout }: { username: string; logo
     setSelected(taskId ?? "rest"); setNotice("選択を履歴に保存しました。");
   }
   async function saveReflection() {
+    if (japanToday(Date.now()) !== reflectionDay) {
+      setNow(Date.now());
+      throw new Error("日付が変わりました。今日の振り返りを入力し直してください。");
+    }
     if (!achievement || !satisfaction || !tiredness) throw new Error("振り返りの3つの質問すべてに答えてください。");
     const saved = await api<Reflection>("/reflections/today", "PUT", { achievement, satisfaction, tiredness, comment: comment.trim() });
     setReflections(previous => [saved, ...previous.filter(r => r.day !== saved.day)].slice(0, 14));
+    setReflectionSummary(null);
     setNotice("今日の振り返りを保存しました。おつかれさまでした。");
+    try { setReflectionSummary(await api<ReflectionSummary>("/reflections/summary")); }
+    catch { setNotice("今日の振り返りは保存済みです。サマリーを取得できなかったため、最新の状態に更新してください。"); }
   }
   const label = <T,>(options: [T, string][], value: T) => options.find(([key]) => key === value)?.[1];
 
@@ -219,6 +229,14 @@ export default function Dashboard({ username, logout }: { username: string; logo
 
       <View style={s.card}><Text style={s.section}>4. 今日の振り返り</Text>
         <Text style={s.muted}>1日の終わりに答えてください。1日1回分を保存し、同じ日なら答え直せます。</Text>
+        {reflectionSummary && reflectionSummary.to === reflectionDay ? <View style={s.suggestion}>
+          <Text style={s.label}>直近7日間の振り返り</Text>
+          <Text style={s.muted}>{reflectionSummary.from} 〜 {reflectionSummary.to}（日本時間）</Text>
+          {reflectionSummary.answered_days ? <>
+            <Text style={s.body}>回答 {reflectionSummary.answered_days}/7日 · できた {reflectionSummary.achievement.done}日 · 途中まで {reflectionSummary.achievement.partial}日 · できなかった {reflectionSummary.achievement.not_done}日</Text>
+            <Text style={s.body}>提案の満足度 平均 {reflectionSummary.average_satisfaction?.toFixed(1)}/5（{reflectionSummary.answered_days}日分）</Text>
+          </> : <Text style={s.muted}>この7日間はまだ振り返りがありません。</Text>}
+        </View> : connected && <Text style={s.muted}>サマリーを表示するには「最新の状態に更新」を押してください。</Text>}
         <Text style={s.label}>今日のタスクはできましたか？</Text>
         <View style={s.row}>{achievements.map(([key, text]) => <Button key={key} title={text} selected={achievement === key}
           disabled={busy || isDemo} onPress={() => setAchievement(key)} />)}</View>
