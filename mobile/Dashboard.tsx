@@ -34,6 +34,16 @@ const clock = (time: number) => new Date(time + 9 * 3600000).toISOString().slice
 // サーバーと同じく日本時間の日付で「今日」を判定する。
 const japanToday = (time: number) => new Date(time + 9 * 3600000).toISOString().slice(0, 10);
 const shortDate = (day: string) => `${Number(day.slice(5, 7))}/${Number(day.slice(8, 10))}`;
+// 締切までの日数（日本時間の日付どうしで数える。過ぎていれば負）。
+const daysUntil = (day: string, today: string) => Math.round((Date.parse(day) - Date.parse(today)) / 86400000);
+function deadlineLabel(day: string, today: string): [string, "over" | "soon" | "later"] {
+  const days = daysUntil(day, today);
+  const weekday = "日月火水木金土"[new Date(`${day}T00:00:00Z`).getUTCDay()];
+  if (days < 0) return [`${shortDate(day)} 締切切れ`, "over"];
+  if (days === 0) return ["今日まで", "soon"];
+  if (days === 1) return ["明日まで", "soon"];
+  return [`${shortDate(day)}(${weekday})まで・あと${days}日`, days <= 3 ? "soon" : "later"];
+}
 
 export default function Dashboard({ username, logout }: { username: string; logout: () => Promise<void> }) {
   const [tab, setTab] = useState<Tab>("now");
@@ -176,7 +186,8 @@ export default function Dashboard({ username, logout }: { username: string; logo
     setReflectionOpen(false);
     setNotice("今日の振り返りを保存しました。おつかれさまでした。");
   }
-  const open = tasks.filter(t => !t.completed);
+  const open = tasks.filter(t => !t.completed)
+    .sort((a, b) => (a.deadline ?? "9999-12-31").localeCompare(b.deadline ?? "9999-12-31"));
   const done = tasks.filter(t => t.completed);
   const places = [...new Set(tasks.map(t => t.place.trim()).filter(Boolean))];
   const aiBlocked = !connected ? "サーバーに接続できていません。↻で再読み込みしてください。"
@@ -198,7 +209,8 @@ export default function Dashboard({ username, logout }: { username: string; logo
 
   // 描画のたびに部品を作り直さないよう、関数として呼び出す。
   function taskRow(task: Task) {
-    const meta = [`${task.minutes}分`, task.deadline && `締切 ${shortDate(task.deadline)}`, task.place].filter(Boolean).join(" · ");
+    const meta = [`${task.minutes}分`, task.place].filter(Boolean).join(" · ");
+    const due = task.deadline && !task.completed ? deadlineLabel(task.deadline, reflectionDay) : null;
     return <View key={task.id} style={s.taskRow}>
       <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: task.completed, disabled: busy }}
         accessibilityLabel={`${task.title}を${task.completed ? "未完了に戻す" : "完了にする"}`} disabled={busy}
@@ -209,6 +221,8 @@ export default function Dashboard({ username, logout }: { username: string; logo
         onPress={() => startEdit(task)} style={s.taskBody}>
         <Text style={[s.taskTitle, task.completed && s.done]}>{task.title}</Text>
         <View style={s.metaRow}>
+          {due && <Text style={[s.due, due[1] === "over" ? s.dueOver : due[1] === "soon" ? s.dueSoon : null]}>{due[0]}</Text>}
+          {task.completed && !!task.deadline && <Text style={ui.hint}>締切 {shortDate(task.deadline)}</Text>}
           <Text style={ui.hint}>{meta}</Text>
           {task.priority === "high" && <Text style={s.badge}>優先</Text>}
           {task.concentration === "high" && <Text style={s.badge}>集中</Text>}
@@ -318,7 +332,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
               const value = days === null ? "" : japanToday(now + days * 86400000);
               return <Button key={text} small title={text} selected={deadline === value} disabled={busy} onPress={() => setDeadline(value)} />;
             })}
-            <View style={s.dateInput}><Input label="締切（日付）" hideLabel value={deadline} set={setDeadline} placeholder="2026-10-15" maxLength={10} disabled={busy} /></View>
+            <View style={s.dateInput}><Input label="締切（日付）" hideLabel value={deadline} set={setDeadline} placeholder="YYYY-MM-DD" maxLength={10} disabled={busy} /></View>
           </Row>
           <Label>優先度</Label><Row>{levels.map(([key, text]) => <Button key={key} small title={text}
             selected={priority === key} disabled={busy} onPress={() => setPriority(key)} />)}</Row>
@@ -400,6 +414,9 @@ const s = StyleSheet.create({
   metaRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6 },
   badge: { fontSize: 11, fontWeight: "700", color: colors.primary, backgroundColor: colors.soft, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, overflow: "hidden" },
   minutesInput: { width: 90 },
+  due: { fontSize: 12, fontWeight: "700", color: colors.text, backgroundColor: colors.line, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, overflow: "hidden" },
+  dueSoon: { color: "#8a4b00", backgroundColor: "#fdecc8" },
+  dueOver: { color: "#9a2920", backgroundColor: "#fde2dd" },
   dateInput: { width: 140 },
   body: { fontSize: 15, lineHeight: 23, color: colors.text },
   suggestion: { padding: 14, backgroundColor: colors.soft, borderRadius: 12, gap: 10 },
