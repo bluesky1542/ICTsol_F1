@@ -164,6 +164,8 @@ class GeminiTest(unittest.TestCase):
                 self.post.assert_called_once()
                 if status == 429:
                     self.assertEqual(response.headers["Retry-After"], "60")
+                else:
+                    self.assertIn(f"Gemini {status}", response.json()["detail"])
         self.post.side_effect = httpx.ReadTimeout("test-secret")
         response = self.suggest()
         self.assertEqual(response.status_code, 502)

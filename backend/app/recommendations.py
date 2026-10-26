@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
@@ -10,6 +11,15 @@ from pydantic import ValidationError
 from .models import AIResult
 from .database import database
 from .usage import reserve_ai_call
+
+logger = logging.getLogger(__name__)
+# Geminiのエラーを、原因の見当がつく日本語に置き換える（キーや生の応答は画面に出さない）。
+UPSTREAM_MESSAGES = {
+    400: "Geminiがリクエストを受け付けませんでした。APIキーの値か、アプリの設定に問題があります。",
+    401: "GeminiのAPIキーが正しくありません。Renderに設定したキーを確認してください。",
+    403: "GeminiのAPIキーに利用権限がありません。キーの制限やプロジェクト設定を確認してください。",
+    404: "Geminiのモデル（GEMINI_MODEL）が見つかりません。モデル名を確認してください。",
+}
 
 CONDITION_LABELS = {
     "slightly_tired": "少し疲れてる",
@@ -51,6 +61,25 @@ INSTRUCTIONS = """あなたは、ユーザーが「今この空き時間に何�
 - 体調の診断や治療の助言はしません。"""
 
 
+# Geminiに渡す出力形式。$ref などを使わない平らな形にして、対応範囲の差で弾かれないようにする。
+# 文字数などの細かい制約は受け取った後に AIResult で検証する。
+RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "choices": {
+            "type": "array", "maxItems": 3,
+            "items": {
+                "type": "object",
+                "properties": {"task_id": {"type": "integer"}, "reason": {"type": "string"}},
+                "required": ["task_id", "reason"],
+            },
+        },
+        "rest_reason": {"type": "string"},
+    },
+    "required": ["choices", "rest_reason"],
+}
+
+
 def generate_gemini(key: str, model: str, payload: str) -> AIResult:
     with httpx.Client(timeout=25) as client:
         response = client.post(
@@ -61,7 +90,7 @@ def generate_gemini(key: str, model: str, payload: str) -> AIResult:
                 "contents": [{"role": "user", "parts": [{"text": payload}]}],
                 "generationConfig": {
                     "responseMimeType": "application/json",
-                    "responseJsonSchema": AIResult.model_json_schema(),
+                    "responseJsonSchema": RESPONSE_SCHEMA,
                     "maxOutputTokens": 2000,
                     "temperature": 0.3,
                 },
@@ -136,6 +165,18 @@ def generate(candidates: list[dict], condition: str, minutes: int, place: str, u
         if len(ids) != len(set(ids)) or not set(ids).issubset({t["id"] for t in candidates}):
             raise ValueError("候補以外のタスクが含まれています")
         return result
-    except (httpx.HTTPError, ValidationError, ValueError):
-        # APIキーや外部サービスの生のエラーはクライアントへ返さない。
-        raise HTTPException(502, "AIの提案を取得できませんでした。設定・利用枠を確認し、時間をおいて再試行してください。") from None
+    except httpx.HTTPStatusError as error:
+        status = error.response.status_code
+        # 原因の調査用にサーバーのログへ残す（Geminiのエラー文にキーは含まれない）。
+        logger.warning("Gemini HTTP %s: %s", status, error.response.text[:300])
+        message = UPSTREAM_MESSAGES.get(status, "Gemini側で一時的なエラーが起きました。時間をおいて再試行してください。")
+        raise HTTPException(502, f"{message}（Gemini {status}）") from None
+    except httpx.TimeoutException:
+        logger.warning("Gemini timeout")
+        raise HTTPException(502, "Geminiの応答が時間内に返りませんでした。もう一度試してください。") from None
+    except httpx.HTTPError as error:
+        logger.warning("Gemini connection error: %s", type(error).__name__)
+        raise HTTPException(502, "Geminiに接続できませんでした。時間をおいて再試行してください。") from None
+    except (ValidationError, ValueError) as error:
+        logger.warning("Gemini response rejected: %s", str(error)[:300])
+        raise HTTPException(502, "AIの応答を読み取れませんでした。もう一度試してください。") from None
