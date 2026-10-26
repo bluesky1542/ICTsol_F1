@@ -141,7 +141,10 @@ def suggest(context: SuggestionInput, user: User):
                   and t["minutes"] <= available
                   and (not t["place"] or t["place"] == context.place)]
     # 入力が肥大化しないよう、締切と優先度順で最大30件を送信する。
-    candidates.sort(key=lambda t: (t["deadline"] or "9999-12-31", {"high": 0, "medium": 1, "low": 2}[t["priority"]]))
+    # 時刻なしの締切はその日の終わり、締切なしは最後として並べる。
+    candidates.sort(key=lambda t: (
+        (t["deadline"] + "T24:00" if len(t["deadline"]) == 10 else t["deadline"]) if t["deadline"] else "9999-12-31T99:99",
+        {"high": 0, "medium": 1, "low": 2}[t["priority"]]))
     candidates = candidates[:30]
     if not candidates:
         return {"source": "no_candidates", "available_minutes": available, "choices": [], "rest_reason": "今の時間・場所で取り組めるタスクはありません。休息も選べます。"}

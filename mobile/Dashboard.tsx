@@ -20,8 +20,6 @@ const conditions: [ConditionLevel, string][] = [
 const achievements: [Achievement, string][] = [["done", "できた"], ["partial", "途中まで"], ["not_done", "できなかった"]];
 const availablePresets = ["15", "30", "60", "90"];
 const minutePresets = ["15", "30", "60"];
-// 締切のよく使う選択肢（今日から何日後か。null は締切なし）。
-const deadlinePresets: [number | null, string][] = [[null, "なし"], [0, "今日"], [1, "明日"], [3, "3日後"], [7, "1週間後"]];
 // 「1830」「9:00」なども HH:MM にそろえる。正しくなければ null。
 function normalizeTime(text: string) {
   const match = text.trim().replace("：", ":").match(/^(\d{1,2}):?(\d{2})$/);
@@ -34,15 +32,19 @@ const clock = (time: number) => new Date(time + 9 * 3600000).toISOString().slice
 // サーバーと同じく日本時間の日付で「今日」を判定する。
 const japanToday = (time: number) => new Date(time + 9 * 3600000).toISOString().slice(0, 10);
 const shortDate = (day: string) => `${Number(day.slice(5, 7))}/${Number(day.slice(8, 10))}`;
-// 締切までの日数（日本時間の日付どうしで数える。過ぎていれば負）。
-const daysUntil = (day: string, today: string) => Math.round((Date.parse(day) - Date.parse(today)) / 86400000);
-function deadlineLabel(day: string, today: string): [string, "over" | "soon" | "later"] {
-  const days = daysUntil(day, today);
+// 並び替え用。時刻なしの締切はその日の終わり、締切なしは最後として扱う。
+const deadlineKey = (deadline: string | null) => !deadline ? "9999-12-31T99:99" : deadline.length === 10 ? `${deadline}T24:00` : deadline;
+// 締切の表示。日付は日本時間で数え、時刻付きならその時刻を過ぎたら「締切切れ」にする。
+function deadlineLabel(deadline: string, now: number): [string, "over" | "soon" | "later"] {
+  const day = deadline.slice(0, 10), time = deadline.slice(11, 16);
+  const days = Math.round((Date.parse(day) - Date.parse(japanToday(now))) / 86400000);
   const weekday = "日月火水木金土"[new Date(`${day}T00:00:00Z`).getUTCDay()];
-  if (days < 0) return [`${shortDate(day)} 締切切れ`, "over"];
-  if (days === 0) return ["今日まで", "soon"];
-  if (days === 1) return ["明日まで", "soon"];
-  return [`${shortDate(day)}(${weekday})まで・あと${days}日`, days <= 3 ? "soon" : "later"];
+  const at = time ? ` ${time}` : "";
+  const passed = time ? now >= Date.parse(`${day}T${time}:00+09:00`) : days < 0;
+  if (passed) return [`${shortDate(day)}${at} 締切切れ`, "over"];
+  if (days === 0) return [`今日${at}まで`, "soon"];
+  if (days === 1) return [`明日${at}まで`, "soon"];
+  return [`${shortDate(day)}(${weekday})${at}まで・あと${days}日`, days <= 3 ? "soon" : "later"];
 }
 
 export default function Dashboard({ username, logout }: { username: string; logout: () => Promise<void> }) {
@@ -60,7 +62,8 @@ export default function Dashboard({ username, logout }: { username: string; logo
   const [notice, setNotice] = useState("");
   const [title, setTitle] = useState("");
   const [minutes, setMinutes] = useState("20");
-  const [deadline, setDeadline] = useState("");
+  const [deadlineDate, setDeadlineDate] = useState("");
+  const [deadlineTime, setDeadlineTime] = useState("");
   const [priority, setPriority] = useState<Level>("medium");
   const [concentration, setConcentration] = useState<Level>("medium");
   const [place, setPlace] = useState("");
@@ -145,11 +148,11 @@ export default function Dashboard({ username, logout }: { username: string; logo
 
   function changeTab(next: Tab) { setTab(next); scroll.current?.scrollTo({ y: 0, animated: false }); }
   function resetForm() {
-    setEditing(null); setTitle(""); setMinutes("20"); setDeadline("");
+    setEditing(null); setTitle(""); setMinutes("20"); setDeadlineDate(""); setDeadlineTime("");
     setPriority("medium"); setConcentration("medium"); setPlace("");
   }
   function startEdit(task: Task) {
-    setEditing(task.id); setTitle(task.title); setMinutes(String(task.minutes)); setDeadline(task.deadline || "");
+    setEditing(task.id); setTitle(task.title); setMinutes(String(task.minutes)); setDeadlineDate(task.deadline?.slice(0, 10) ?? ""); setDeadlineTime(task.deadline?.slice(11, 16) ?? "");
     setPriority(task.priority); setConcentration(task.concentration); setPlace(task.place);
     scroll.current?.scrollTo({ y: taskCardY.current, animated: true });
   }
@@ -159,12 +162,16 @@ export default function Dashboard({ username, logout }: { username: string; logo
   }
   async function saveTask() {
     if (!title.trim()) throw new Error("タスク名を入力してください。");
-    if (deadline && (!/^\d{4}-\d{2}-\d{2}$/.test(deadline) ||
-        Number.isNaN(Date.parse(deadline)) || new Date(deadline).toISOString().slice(0, 10) !== deadline)) {
-      throw new Error("締切は実在する日付を YYYY-MM-DD 形式で入力してください。");
+    const date = deadlineDate.trim(), time = deadlineTime.trim();
+    if (time && !date) throw new Error("締切の時刻を入れるときは、日付も入れてください。");
+    if (date && (!/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+        Number.isNaN(Date.parse(date)) || new Date(date).toISOString().slice(0, 10) !== date)) {
+      throw new Error("締切の日付は 2026-11-05 のように、実在する日付で入力してください。");
     }
+    if (time && !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) throw new Error("締切の時刻は 18:30 のように入力してください。");
+    const deadline = date ? (time ? `${date}T${time}` : date) : null;
     const saved = await api<Task>(editing === null ? "/tasks" : `/tasks/${editing}`, editing === null ? "POST" : "PUT", {
-      title: title.trim(), minutes: integer(minutes), deadline: deadline || null, priority, concentration, place: place.trim(),
+      title: title.trim(), minutes: integer(minutes), deadline, priority, concentration, place: place.trim(),
     });
     setTasks(previous => editing === null ? [saved, ...previous] : previous.map(t => t.id === saved.id ? saved : t));
     resetForm(); invalidate(); setNotice("タスクを保存しました。");
@@ -189,7 +196,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
     setNotice("今日の振り返りを保存しました。おつかれさまでした。");
   }
   const open = tasks.filter(t => !t.completed)
-    .sort((a, b) => (a.deadline ?? "9999-12-31").localeCompare(b.deadline ?? "9999-12-31"));
+    .sort((a, b) => deadlineKey(a.deadline).localeCompare(deadlineKey(b.deadline)));
   const done = tasks.filter(t => t.completed);
   const places = [...new Set(tasks.map(t => t.place.trim()).filter(Boolean))];
   const aiBlocked = !connected ? "サーバーに接続できていません。↻で再読み込みしてください。"
@@ -212,14 +219,14 @@ export default function Dashboard({ username, logout }: { username: string; logo
   // 描画のたびに部品を作り直さないよう、関数として呼び出す。
   function taskRow(task: Task) {
     const meta = [`${task.minutes}分`, task.place].filter(Boolean).join(" · ");
-    const due = task.deadline && !task.completed ? deadlineLabel(task.deadline, reflectionDay) : null;
+    const due = task.deadline && !task.completed ? deadlineLabel(task.deadline, now) : null;
     return <View key={task.id} style={s.taskRow}>
       <Pressable accessibilityRole="button" accessibilityLabel={`${task.title}を編集`} disabled={busy}
         onPress={() => startEdit(task)} style={s.taskBody}>
         <Text style={[s.taskTitle, task.completed && s.done]}>{task.title}</Text>
         <View style={s.metaRow}>
           {due && <Text style={[s.due, due[1] === "over" ? s.dueOver : due[1] === "soon" ? s.dueSoon : null]}>{due[0]}</Text>}
-          {task.completed && !!task.deadline && <Text style={ui.hint}>締切 {shortDate(task.deadline)}</Text>}
+          {task.completed && !!task.deadline && <Text style={ui.hint}>締切 {shortDate(task.deadline)}{task.deadline.slice(10).replace("T", " ")}</Text>}
           <Text style={ui.hint}>{meta}</Text>
           {task.priority === "high" && <Text style={s.badge}>優先</Text>}
           {task.concentration === "high" && <Text style={s.badge}>集中</Text>}
@@ -337,13 +344,12 @@ export default function Dashboard({ username, logout }: { username: string; logo
               <View style={s.minutesInput}><Input label="かかる時間（分）" hideLabel value={minutes} set={setMinutes} numeric placeholder="分" disabled={busy} /></View>
               <Text style={ui.hint}>分</Text>
             </Row>
-            <Label>締切</Label>
+            <Label>締切（なくてもOK・時刻は省略可）</Label>
             <Row>
-              {deadlinePresets.map(([days, text]) => {
-                const value = days === null ? "" : japanToday(now + days * 86400000);
-                return <Button key={text} small title={text} selected={deadline === value} disabled={busy} onPress={() => setDeadline(value)} />;
-              })}
-              <View style={s.dateInput}><Input label="締切（日付）" hideLabel value={deadline} set={setDeadline} placeholder="YYYY-MM-DD" maxLength={10} disabled={busy} /></View>
+              <TimeField kind="date" label="締切の日付" value={deadlineDate} set={setDeadlineDate} disabled={busy} />
+              <TimeField label="締切の時刻" value={deadlineTime} set={setDeadlineTime} disabled={busy} />
+              {!!(deadlineDate || deadlineTime) && <Button small title="消す" label="締切を消す" disabled={busy}
+                onPress={() => { setDeadlineDate(""); setDeadlineTime(""); }} />}
             </Row>
             <Label>優先度</Label><Row>{levels.map(([key, text]) => <Button key={key} small title={text}
               selected={priority === key} disabled={busy} onPress={() => setPriority(key)} />)}</Row>
@@ -422,7 +428,6 @@ const s = StyleSheet.create({
   due: { fontSize: 12, fontWeight: "700", color: colors.text, backgroundColor: colors.line, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, overflow: "hidden" },
   dueSoon: { color: "#8a4b00", backgroundColor: "#fdecc8" },
   dueOver: { color: "#9a2920", backgroundColor: "#fde2dd" },
-  dateInput: { width: 140 },
   body: { fontSize: 15, lineHeight: 23, color: colors.text },
   suggestion: { padding: 14, backgroundColor: colors.soft, borderRadius: 12, gap: 10 },
   rest: { backgroundColor: "#f4f1ea" },

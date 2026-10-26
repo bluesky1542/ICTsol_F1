@@ -67,9 +67,16 @@ class APITest(unittest.TestCase):
         response = self.client.put(f'/api/tasks/{task["id"]}', json={"title": "更新", "minutes": 10})
         self.assertEqual(response.json()["title"], "更新")
         self.assertTrue(self.client.patch(f'/api/tasks/{task["id"]}', json={"completed": True}).json()["completed"])
-        for data in [{"title": " ", "minutes": 20}, {"title": "a", "minutes": 0}, {"title": "a", "minutes": 1, "deadline": "2026-02-30"}]:
+        for data in [{"title": " ", "minutes": 20}, {"title": "a", "minutes": 0}, {"title": "a", "minutes": 1, "deadline": "2026-02-30"},
+                     {"title": "a", "minutes": 1, "deadline": "2026-10-27T24:00"}, {"title": "a", "minutes": 1, "deadline": "2026-10-27 18:00"},
+                     {"title": "a", "minutes": 1, "deadline": "2026-10-27T18:00:00"}]:
             self.assertEqual(self.client.post("/api/tasks", json=data).status_code, 422)
         self.assertEqual(self.client.patch("/api/tasks/999", json={"completed": True}).status_code, 404)
+        # 締切は日付だけでも、時刻付きでも保存できる。空文字は締切なし。
+        for deadline, saved in [("2026-10-27", "2026-10-27"), ("2026-10-27T18:30", "2026-10-27T18:30"), ("", None)]:
+            response = self.client.post("/api/tasks", json={"title": "締切", "minutes": 10, "deadline": deadline})
+            self.assertEqual(response.status_code, 201, response.text)
+            self.assertEqual(response.json()["deadline"], saved)
 
     def test_missing_condition_and_key(self):
         self.create()
