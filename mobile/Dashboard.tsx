@@ -19,7 +19,6 @@ const conditions: [ConditionLevel, string][] = [
 ];
 const achievements: [Achievement, string][] = [["done", "できた"], ["partial", "途中まで"], ["not_done", "できなかった"]];
 const availablePresets = ["15", "30", "60", "90"];
-const minutePresets = ["15", "30", "60"];
 // 「1830」「9:00」なども HH:MM にそろえる。正しくなければ null。
 function normalizeTime(text: string) {
   const match = text.trim().replace("：", ":").match(/^(\d{1,2}):?(\d{2})$/);
@@ -340,7 +339,6 @@ export default function Dashboard({ username, logout }: { username: string; logo
             <Input label="タスク名" hideLabel value={title} set={setTitle} placeholder="タスク名（例：レポートの下書き）" disabled={busy} />
             <Label>かかる時間</Label>
             <Row>
-              {minutePresets.map(value => <Button key={value} small title={`${value}分`} selected={minutes === value} disabled={busy} onPress={() => setMinutes(value)} />)}
               <View style={s.minutesInput}><Input label="かかる時間（分）" hideLabel value={minutes} set={setMinutes} numeric placeholder="分" disabled={busy} /></View>
               <Text style={ui.hint}>分</Text>
             </Row>
