@@ -63,7 +63,8 @@ def hello() -> dict[str, str]:
 
 @app.get("/api/config")
 def config(user: User):
-    return {"ai_configured": bool(os.getenv("OPENAI_API_KEY", "").strip() and os.getenv("OPENAI_MODEL", "").strip())}
+    provider, key, model = recommendations.configuration()
+    return {"ai_configured": bool(key and model), "ai_provider": provider}
 
 
 @app.get("/api/tasks", response_model=list[Task])

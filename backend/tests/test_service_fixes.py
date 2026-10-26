@@ -20,7 +20,7 @@ class ServiceFixesTest(unittest.TestCase):
         self.temp = self.enterContext(tempfile.TemporaryDirectory())
         self.enterContext(patch.dict(os.environ, {
             "DATABASE_URL": "", "REQUIRE_DATABASE_URL": "0", "DATABASE_PATH": self.temp + "/review.sqlite3",
-            "OPENAI_API_KEY": "test", "OPENAI_MODEL": "test", "AI_USER_MINUTE_LIMIT": "10",
+            "AI_PROVIDER": "openai", "OPENAI_API_KEY": "test", "OPENAI_MODEL": "test", "AI_USER_MINUTE_LIMIT": "10",
             "AI_USER_DAILY_LIMIT": "20", "AI_GLOBAL_DAILY_LIMIT": "100", "AI_GLOBAL_MONTHLY_LIMIT": "1000",
         }))
         self.client = self.enterContext(TestClient(app))

@@ -11,7 +11,7 @@ def main():
         raise SystemExit("先にmobileでWeb版を書き出してください。")
     with tempfile.TemporaryDirectory() as folder:
         # 本物のデータとAPIキーは使用しない。
-        os.environ.update(REQUIRE_DATABASE_URL="0", DATABASE_URL="", DATABASE_PATH=str(Path(folder) / "test.sqlite3"), WEB_DIST_PATH=str(web_dist), OPENAI_API_KEY="", OPENAI_MODEL="")
+        os.environ.update(REQUIRE_DATABASE_URL="0", DATABASE_URL="", DATABASE_PATH=str(Path(folder) / "test.sqlite3"), WEB_DIST_PATH=str(web_dist), AI_PROVIDER="openai", OPENAI_API_KEY="", OPENAI_MODEL="")
         from app.main import app
         with TestClient(app) as client:
             assert client.get("/").status_code == 200
