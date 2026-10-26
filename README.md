@@ -155,7 +155,7 @@ GEMINI_MODEL=gemini-2.5-flash-lite
 ```
 
 3. バックエンドを再起動し、画面右上の「↻」を押す。
-4. 「いま」タブの「やること」でタスクを登録し、今の調子・使える時間・場所を選んで「提案してもらう」を押す。
+4. 「ホーム」タブの「やること」でタスクを登録し、今の調子・使える時間・場所を選んで「提案してもらう」を押す。
 
 2026-10-26確認時点で`gemini-2.5-flash-lite`の標準テキスト入出力には無料枠があります。対象モデル・利用上限は変更されるため、[公式料金表](https://ai.google.dev/gemini-api/docs/pricing)と[AI Studioの利用上限](https://aistudio.google.com/usage?tab=rate-limit)を確認してください。アプリからはFree Tierか有料プロジェクトかを判定できません。
 

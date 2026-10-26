@@ -223,7 +223,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
           onPress={() => void run(async () => { await refresh(); setCalendarReload(n => n + 1); })} />
         <Button small title="ログアウト" disabled={busy} onPress={() => void run(logout)} />
       </View>
-      <Tabs tabs={[["now", "いま"], ["calendar", "予定"]]}
+      <Tabs tabs={[["now", "ホーム"], ["calendar", "カレンダー"]]}
         value={tab} set={changeTab} />
       {isDemo && <Hint>デモ画面です（保存・AIは動きません）</Hint>}
       {!!error && <Text accessibilityRole="alert" style={s.error}>{error}</Text>}
@@ -231,7 +231,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
     </View>
     <ScrollView ref={scroll} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
 
-      {/* いま：調子 → 提案 → やること → 記録 の順に上から操作する */}
+      {/* ホーム：調子 → 提案 → やること → 記録 の順に上から操作する */}
       <View style={[s.stack, hidden("now")]}>
         <Card title="今の調子は？">
           <Row>{conditions.map(([key, text]) => <Button key={key} title={text} disabled={busy || !connected}
@@ -343,7 +343,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
         </Card>
       </View>
 
-      {/* 予定：常に読み込んだままにし、連携状態を「いま」タブでも使う */}
+      {/* 予定：常に読み込んだままにし、連携状態をホームでも使う */}
       <View style={[s.stack, hidden("calendar")]}>
         <CalendarPanel disabled={busy || !connected} run={run} reload={calendarReload}
           changed={linked => { setCalendarLinked(linked); invalidate(); }} />
