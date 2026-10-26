@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Animated, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
-import { Achievement, Activity, api, Condition, ConditionLevel, Level, Reflection, ReflectionSummary, Suggestions, Task, WorkPlan } from "./api";
+import { Achievement, Activity, api, Condition, ConditionLevel, Level, Reflection, Suggestions, Task, WorkPlan } from "./api";
 import CalendarPanel from "./CalendarPanel";
 import { isDemo } from "./demo";
 import { askNotificationPermission, scheduleNotification } from "./notify";
@@ -39,7 +39,6 @@ const shortDate = (day: string) => `${Number(day.slice(5, 7))}/${Number(day.slic
 export default function Dashboard({ username, logout }: { username: string; logout: () => Promise<void> }) {
   const [tab, setTab] = useState<Tab>("now");
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [activities, setActivities] = useState<Activity[]>([]);
   const [condition, setCondition] = useState<Condition | null>(null);
   const [aiConfigured, setAIConfigured] = useState(false);
   const [connected, setConnected] = useState(false);
@@ -66,7 +65,6 @@ export default function Dashboard({ username, logout }: { username: string; logo
   const [calendarReload, setCalendarReload] = useState(0);
   const [useCalendar, setUseCalendar] = useState(true);
   const [reflections, setReflections] = useState<Reflection[]>([]);
-  const [reflectionSummary, setReflectionSummary] = useState<ReflectionSummary | null>(null);
   const [achievement, setAchievement] = useState<Achievement | null>(null);
   const [satisfaction, setSatisfaction] = useState<number | null>(null);
   const [tiredness, setTiredness] = useState<ConditionLevel | null>(null);
@@ -118,13 +116,12 @@ export default function Dashboard({ username, logout }: { username: string; logo
   }
   function invalidate() { setSuggestions(null); setSelected(null); }
   async function refresh() {
-    const [nextTasks, nextCondition, config, nextActivities, nextReflections, nextSummary, plan] = await Promise.all([
+    const [nextTasks, nextCondition, config, nextReflections, plan] = await Promise.all([
       api<Task[]>("/tasks"), api<Condition | null>("/condition"), api<{ ai_configured: boolean }>("/config"),
-      api<Activity[]>("/activities"), api<Reflection[]>("/reflections"),
-      api<ReflectionSummary>("/reflections/summary"), api<WorkPlan | null>("/reflections/plan"),
+      api<Reflection[]>("/reflections"), api<WorkPlan | null>("/reflections/plan"),
     ]);
     setWorkEnd(plan?.end_time ?? null);
-    setNow(Date.now()); setActivities(nextActivities); setReflections(nextReflections); setReflectionSummary(nextSummary);
+    setNow(Date.now()); setReflections(nextReflections);
     setTasks(nextTasks); setCondition(nextCondition); setAIConfigured(config.ai_configured); setConnected(true); invalidate();
   }
   useEffect(() => { void run(refresh); }, []);
@@ -160,8 +157,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
     setTasks(previous => previous.map(t => t.id === saved.id ? saved : t)); invalidate();
   }
   async function choose(taskId: number | null) {
-    const saved = await api<Activity>("/activities", "POST", { task_id: taskId });
-    setActivities(previous => [saved, ...previous].slice(0, 50));
+    await api<Activity>("/activities", "POST", { task_id: taskId });
     setSelected(taskId ?? "rest"); setNotice(taskId === null ? "休息を記録しました。ゆっくり休みましょう。" : "取り組むタスクを記録しました。");
   }
   async function saveReflection() {
@@ -172,12 +168,9 @@ export default function Dashboard({ username, logout }: { username: string; logo
     if (!achievement || !satisfaction || !tiredness) throw new Error("振り返りの3つの質問すべてに答えてください。");
     const saved = await api<Reflection>("/reflections/today", "PUT", { achievement, satisfaction, tiredness, comment: comment.trim() });
     setReflections(previous => [saved, ...previous.filter(r => r.day !== saved.day)].slice(0, 14));
-    setReflectionSummary(null); setReflectionOpen(false);
+    setReflectionOpen(false);
     setNotice("今日の振り返りを保存しました。おつかれさまでした。");
-    try { setReflectionSummary(await api<ReflectionSummary>("/reflections/summary")); }
-    catch { setNotice("今日の振り返りは保存済みです。まとめは↻で更新してください。"); }
   }
-  const label = <T,>(options: [T, string][], value: T) => options.find(([key]) => key === value)?.[1];
   const open = tasks.filter(t => !t.completed);
   const done = tasks.filter(t => t.completed);
   const places = [...new Set(tasks.map(t => t.place.trim()).filter(Boolean))];
@@ -343,33 +336,10 @@ export default function Dashboard({ username, logout }: { username: string; logo
         </Card>
         </View>
 
-        {/* 記録：今日の振り返りの入口と、これまでの記録（普段は閉じておく） */}
-        <Card title="きょうの記録" right={todayReflection ? <Hint>振り返り済み ✓</Hint> : workEnd ? <Hint>{workEnd}まで</Hint> : undefined}>
-          {!showReflection && <Row><Button small title={todayReflection ? "振り返りを答え直す" : "今すぐ振り返る"} disabled={busy || isDemo}
+        {/* 振り返り：通知を待たずに答えたいとき・答え直したいときの入口（過去の回答は表示しない） */}
+        <Card title="今日の振り返り" right={todayReflection ? <Hint>回答済み ✓</Hint> : workEnd ? <Hint>{workEnd}まで</Hint> : undefined}>
+          {!showReflection && <Row><Button small title={todayReflection ? "答え直す" : "今すぐ振り返る"} disabled={busy || isDemo}
             onPress={() => setReflectionOpen(true)} /></Row>}
-          <Details title="これまでの記録">
-            {reflectionSummary && reflectionSummary.to === reflectionDay && !!reflectionSummary.answered_days && <>
-              <Label>この7日間</Label>
-              <View style={s.stats}>
-                <Stat value={`${reflectionSummary.answered_days}/7`} text="回答" />
-                <Stat value={String(reflectionSummary.achievement.done)} text="できた" />
-                <Stat value={String(reflectionSummary.achievement.partial)} text="途中まで" />
-                <Stat value={String(reflectionSummary.achievement.not_done)} text="できなかった" />
-                <Stat value={`★${reflectionSummary.average_satisfaction?.toFixed(1)}`} text="満足度" />
-              </View>
-            </>}
-            {!!reflections.length && <Label>振り返り</Label>}
-            {reflections.slice(0, 7).map(r => <View key={r.day} style={s.listRow}>
-              <Text style={s.taskTitle}>{shortDate(r.day)}　<Text style={ui.hint}>{label(achievements, r.achievement)} · ★{r.satisfaction} · {label(conditions, r.tiredness)}</Text></Text>
-              {!!r.comment && <Text style={s.body}>{r.comment}</Text>}
-            </View>)}
-            <Label>取り組み・休息</Label>
-            {!activities.length && <Hint>提案から選ぶと、ここに記録されます。</Hint>}
-            {activities.map(activity => <View key={activity.id} style={s.listRow}>
-              <Text style={s.taskTitle}>{activity.task_title ?? "ひと休み"}</Text>
-              <Text style={ui.hint}>{new Date(activity.created_at).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })} · {label(conditions, activity.condition_level)}</Text>
-            </View>)}
-          </Details>
         </Card>
       </View>
 
@@ -408,10 +378,6 @@ export default function Dashboard({ username, logout }: { username: string; logo
   </SafeAreaView></SafeAreaProvider>;
 }
 
-function Stat({ value, text }: { value: string; text: string }) {
-  return <View style={s.stat}><Text style={s.statValue}>{value}</Text><Text style={ui.hint}>{text}</Text></View>;
-}
-
 const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.background, overflow: "hidden" },
   panel: { position: "absolute", top: 12, right: 12, backgroundColor: "white", borderRadius: 18,
@@ -438,8 +404,4 @@ const s = StyleSheet.create({
   body: { fontSize: 15, lineHeight: 23, color: colors.text },
   suggestion: { padding: 14, backgroundColor: colors.soft, borderRadius: 12, gap: 10 },
   rest: { backgroundColor: "#f4f1ea" },
-  listRow: { gap: 4, paddingVertical: 10, borderTopWidth: 1, borderColor: colors.line },
-  stats: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  stat: { flexGrow: 1, minWidth: 80, padding: 10, borderRadius: 10, backgroundColor: colors.soft, alignItems: "center", gap: 2 },
-  statValue: { fontSize: 20, fontWeight: "700", color: colors.ink },
 });
