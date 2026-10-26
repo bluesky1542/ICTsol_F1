@@ -33,7 +33,8 @@ export default function Login() {
     finally { setBusy(false); }
   }
   async function logout() {
-    await api("/auth/logout", "POST");
+    // 通信に失敗しても、この端末ではログアウトした状態にする。
+    try { await api("/auth/logout", "POST"); } catch { /* サーバー側のセッションは期限切れで消える */ }
     setSession(null); setUser(null); setPassword(""); setConfirm(""); setError("");
   }
   if (isDemo) return <Dashboard username="画面確認用デモ" logout={async () => { window.location.href = window.location.pathname; }} />;

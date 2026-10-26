@@ -15,6 +15,8 @@ export default function CalendarPanel({ disabled, run, changed, reload }: Props)
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [loadError, setLoadError] = useState("");
+  // 予定の全削除は取り消せないため、2回押したときだけ実行する。
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [manualMessage, setManualMessage] = useState<{ error: boolean; text: string } | null>(null);
   function update(value: Snapshot) { setSnapshot(value); changed(!!value.sync); }
   useEffect(() => {
@@ -92,9 +94,13 @@ export default function CalendarPanel({ disabled, run, changed, reload }: Props)
       <Hint>端末からの取り込みはボタンを押したときだけ行います。予定が変わったときや24時間経ったら取り込み直してください。終日の予定は一日中「予定あり」として扱います。手入力の予定は取り込み直す必要はありません。</Hint>
       {snapshot.sync && <Hint>最終更新：{new Date(snapshot.sync.synced_at).toLocaleString("ja-JP")}</Hint>}
     </Details>
-    {!!snapshot.sync && <Button small title="保存した予定をすべて削除" disabled={disabled} onPress={() => void run(async () => {
-      await api("/calendar", "DELETE"); update({ sync: null, events: [] }); setSelected([]); setCalendars([]);
-    })} />}
+    {!!snapshot.sync && <Row>
+      <Button small title={confirmDelete ? "本当に削除する" : "保存した予定をすべて削除"} disabled={disabled}
+        onPress={() => confirmDelete ? void run(async () => {
+          await api("/calendar", "DELETE"); update({ sync: null, events: [] }); setSelected([]); setCalendars([]); setConfirmDelete(false);
+        }) : setConfirmDelete(true)} />
+      {confirmDelete && <Button small title="やめる" disabled={disabled} onPress={() => setConfirmDelete(false)} />}
+    </Row>}
   </Card>;
 }
 const s = StyleSheet.create({
