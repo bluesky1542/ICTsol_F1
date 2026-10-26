@@ -39,6 +39,12 @@ class ReflectionInput(BaseModel):
     comment: str = Field(default="", max_length=200)
 
 
+class WorkPlanInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    # 日本時間の HH:MM（00:00〜23:59）
+    end_time: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+
+
 class ActivityInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     task_id: int | None = Field(ge=1)

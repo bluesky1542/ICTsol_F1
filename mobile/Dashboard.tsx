@@ -2,12 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
-import { Achievement, Activity, api, Condition, ConditionLevel, Level, Reflection, ReflectionSummary, Suggestions, Task } from "./api";
+import { Achievement, Activity, api, Condition, ConditionLevel, Level, Reflection, ReflectionSummary, Suggestions, Task, WorkPlan } from "./api";
 import CalendarPanel from "./CalendarPanel";
 import { isDemo } from "./demo";
+import { askNotificationPermission, scheduleNotification } from "./notify";
 import { Button, Card, colors, Details, Hint, Input, Label, Row, Stars, Tabs, s as ui } from "./ui";
 
-type Tab = "now" | "tasks" | "calendar" | "reflection";
+type Tab = "now" | "tasks" | "calendar";
 const levels: [Level, string][] = [["low", "低"], ["medium", "中"], ["high", "高"]];
 const conditions: [ConditionLevel, string][] = [
   ["slightly_tired", "少し疲れてる"],
@@ -19,6 +20,16 @@ const conditions: [ConditionLevel, string][] = [
 const achievements: [Achievement, string][] = [["done", "できた"], ["partial", "途中まで"], ["not_done", "できなかった"]];
 const availablePresets = ["15", "30", "60", "90"];
 const minutePresets = ["15", "30", "60"];
+const endPresets = ["17:00", "18:00", "19:00", "20:00", "21:00", "22:00"];
+// 「1830」「9:00」なども HH:MM にそろえる。正しくなければ null。
+function normalizeTime(text: string) {
+  const match = text.trim().replace("：", ":").match(/^(\d{1,2}):?(\d{2})$/);
+  if (!match || Number(match[1]) > 23 || Number(match[2]) > 59) return null;
+  return `${match[1].padStart(2, "0")}:${match[2]}`;
+}
+// 振り返りは終了予定の30分前から出す。
+const REFLECTION_LEAD = 30 * 60000;
+const clock = (time: number) => new Date(time + 9 * 3600000).toISOString().slice(11, 16);
 // サーバーと同じく日本時間の日付で「今日」を判定する。
 const japanToday = (time: number) => new Date(time + 9 * 3600000).toISOString().slice(0, 10);
 const shortDate = (day: string) => `${Number(day.slice(5, 7))}/${Number(day.slice(8, 10))}`;
@@ -57,15 +68,28 @@ export default function Dashboard({ username, logout }: { username: string; logo
   const [satisfaction, setSatisfaction] = useState<number | null>(null);
   const [tiredness, setTiredness] = useState<ConditionLevel | null>(null);
   const [comment, setComment] = useState("");
+  const [workEnd, setWorkEnd] = useState<string | null>(null);
+  const [customEnd, setCustomEnd] = useState(false);
+  const [endDraft, setEndDraft] = useState("");
+  const [reflectionOpen, setReflectionOpen] = useState(false);
   const [now, setNow] = useState(Date.now());
   const reflectionDay = japanToday(now);
   const todayReflection = reflections.find(r => r.day === reflectionDay);
   const conditionFresh = !!condition && now < Date.parse(condition.expires_at);
+  // 終了予定は日本時間の今日の時刻として扱う。
+  const dueAt = workEnd ? Date.parse(`${reflectionDay}T${workEnd}:00+09:00`) - REFLECTION_LEAD : null;
+  const reflectionDue = dueAt !== null && now >= dueAt && !todayReflection;
+  const showReflection = reflectionDue || reflectionOpen;
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30000);
     return () => clearInterval(timer);
   }, []);
   useEffect(() => { if (!conditionFresh) invalidate(); }, [conditionFresh]);
+  useEffect(() => {
+    if (dueAt === null || todayReflection) return;
+    return scheduleNotification(dueAt, "今日の振り返りの時間です", "おつかれさまでした。3つの質問に答えて1日を締めくくりましょう。",
+      () => { setNow(Date.now()); changeTab("now"); });
+  }, [dueAt, !!todayReflection]);
   useEffect(() => {
     setAchievement(todayReflection?.achievement ?? null); setSatisfaction(todayReflection?.satisfaction ?? null);
     setTiredness(todayReflection?.tiredness ?? null); setComment(todayReflection?.comment ?? "");
@@ -81,11 +105,12 @@ export default function Dashboard({ username, logout }: { username: string; logo
   }
   function invalidate() { setSuggestions(null); setSelected(null); }
   async function refresh() {
-    const [nextTasks, nextCondition, config, nextActivities, nextReflections, nextSummary] = await Promise.all([
+    const [nextTasks, nextCondition, config, nextActivities, nextReflections, nextSummary, plan] = await Promise.all([
       api<Task[]>("/tasks"), api<Condition | null>("/condition"), api<{ ai_configured: boolean }>("/config"),
       api<Activity[]>("/activities"), api<Reflection[]>("/reflections"),
-      api<ReflectionSummary>("/reflections/summary"),
+      api<ReflectionSummary>("/reflections/summary"), api<WorkPlan | null>("/reflections/plan"),
     ]);
+    setWorkEnd(plan?.end_time ?? null);
     setNow(Date.now()); setActivities(nextActivities); setReflections(nextReflections); setReflectionSummary(nextSummary);
     setTasks(nextTasks); setCondition(nextCondition); setAIConfigured(config.ai_configured); setConnected(true); invalidate();
   }
@@ -134,7 +159,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
     if (!achievement || !satisfaction || !tiredness) throw new Error("振り返りの3つの質問すべてに答えてください。");
     const saved = await api<Reflection>("/reflections/today", "PUT", { achievement, satisfaction, tiredness, comment: comment.trim() });
     setReflections(previous => [saved, ...previous.filter(r => r.day !== saved.day)].slice(0, 14));
-    setReflectionSummary(null);
+    setReflectionSummary(null); setReflectionOpen(false);
     setNotice("今日の振り返りを保存しました。おつかれさまでした。");
     try { setReflectionSummary(await api<ReflectionSummary>("/reflections/summary")); }
     catch { setNotice("今日の振り返りは保存済みです。まとめは↻で更新してください。"); }
@@ -147,6 +172,18 @@ export default function Dashboard({ username, logout }: { username: string; logo
     : !aiConfigured ? "AI提案は準備中です。"
     : !conditionFresh ? "先に「今の調子」を選んでください。" : "";
   const setAvailableAndReset = (value: string) => { setAvailable(value); invalidate(); };
+  function saveWorkEnd(text: string) {
+    // 許可ダイアログはボタン操作の直後に出す必要があるため、通信より先に求める。
+    askNotificationPermission();
+    void run(async () => {
+      const end = normalizeTime(text);
+      if (!end) throw new Error("終了時刻は 18:30 のように入力してください。");
+      const saved = await api<WorkPlan>("/reflections/plan", "PUT", { end_time: end });
+      setWorkEnd(saved.end_time); setCustomEnd(false); setEndDraft(""); setNow(Date.now());
+      const due = Date.parse(`${saved.day}T${saved.end_time}:00+09:00`) - REFLECTION_LEAD;
+      setNotice(due <= Date.now() ? "終了予定が近いので、振り返りを上に出しました。" : `${clock(due)}ごろに振り返りをお知らせします。`);
+    });
+  }
 
   // 描画のたびに部品を作り直さないよう、関数として呼び出す。
   function taskRow(task: Task) {
@@ -180,9 +217,10 @@ export default function Dashboard({ username, logout }: { username: string; logo
           onPress={() => void run(async () => { await refresh(); setCalendarReload(n => n + 1); })} />
         <Button small title="ログアウト" disabled={busy} onPress={() => void run(logout)} />
       </View>
-      <Tabs tabs={[["now", "いま"], ["tasks", `タスク${open.length ? ` ${open.length}` : ""}`], ["calendar", "予定"], ["reflection", "振り返り"]]}
+      <Tabs tabs={[["now", "いま"], ["tasks", `タスク${open.length ? ` ${open.length}` : ""}`], ["calendar", "予定"]]}
         value={tab} set={changeTab} />
       {isDemo && <Hint>デモ画面です（保存・AIは動きません）</Hint>}
+      {reflectionDue && tab !== "now" && <Button primary title="🌙 今日の振り返りに答える" onPress={() => changeTab("now")} />}
       {!!error && <Text accessibilityRole="alert" style={s.error}>{error}</Text>}
       {!!notice && <Text accessibilityLiveRegion="polite" style={s.notice}>{notice}</Text>}
     </View>
@@ -190,6 +228,22 @@ export default function Dashboard({ username, logout }: { username: string; logo
 
       {/* いま：調子 → 時間 → 場所 → 提案 の順に上から操作する */}
       <View style={[s.stack, hidden("now")]}>
+        {showReflection && <Card title="🌙 今日の振り返り" right={!reflectionDue && <Button small title="閉じる" onPress={() => setReflectionOpen(false)} />}>
+          <Hint>おつかれさまでした。3つ答えたら1日の締めくくりです。</Hint>
+          <Label>タスクはできた？</Label>
+          <Row>{achievements.map(([key, text]) => <Button key={key} title={text} selected={achievement === key}
+            disabled={busy || isDemo} onPress={() => setAchievement(key)} />)}</Row>
+          <Label>AIの提案は役に立った？</Label>
+          <Stars value={satisfaction} set={setSatisfaction} disabled={busy || isDemo} />
+          <Label>今の疲れ具合は？</Label>
+          <Row>{conditions.map(([key, text]) => <Button key={key} small title={text} selected={tiredness === key}
+            disabled={busy || isDemo} onPress={() => setTiredness(key)} />)}</Row>
+          <TextInput accessibilityLabel="ひとこと" style={ui.input} value={comment} onChangeText={setComment} editable={!busy && !isDemo}
+            placeholder="ひとこと（任意）" placeholderTextColor="#64748b" maxLength={200} multiline />
+          <Button primary title={todayReflection ? "更新する" : "保存する"} disabled={busy || !connected || isDemo}
+            onPress={() => void run(saveReflection)} />
+        </Card>}
+
         <Card title="今の調子は？">
           <Row>{conditions.map(([key, text]) => <Button key={key} title={text} disabled={busy || !connected}
             selected={conditionFresh && condition?.level === key} onPress={() => void run(async () => {
@@ -197,6 +251,18 @@ export default function Dashboard({ username, logout }: { username: string; logo
               setCondition(saved); setNow(Date.now()); invalidate(); setNotice("今の調子を保存しました。");
             })} />)}</Row>
           {condition && !conditionFresh && <Hint warn>日付が変わりました。今日の調子を選んでください。</Hint>}
+          <Label>今日は何時まで作業する？</Label>
+          <Row>
+            {endPresets.map(time => <Button key={time} small title={time} selected={!customEnd && workEnd === time}
+              disabled={busy || !connected || isDemo} onPress={() => saveWorkEnd(time)} />)}
+            <Button small title="その他" selected={customEnd || (!!workEnd && !endPresets.includes(workEnd))}
+              disabled={busy || !connected || isDemo} onPress={() => { setCustomEnd(true); setEndDraft(workEnd ?? ""); }} />
+          </Row>
+          {customEnd && <Row>
+            <View style={s.minutesInput}><Input label="終了時刻" hideLabel value={endDraft} set={setEndDraft} placeholder="18:30" maxLength={5} disabled={busy} /></View>
+            <Button small primary title="決定" disabled={busy} onPress={() => saveWorkEnd(endDraft)} />
+          </Row>}
+          {dueAt !== null && !todayReflection && !reflectionDue && <Hint>🔔 {clock(dueAt)}ごろに振り返りをお知らせします</Hint>}
         </Card>
 
         <Card title="AIに次の一歩を提案してもらう">
@@ -246,6 +312,35 @@ export default function Dashboard({ username, logout }: { username: string; logo
               disabled={busy || isDemo || selected === "rest"} onPress={() => void run(() => choose(null))} />
           </View>
         </Card>}
+
+        {/* 記録：今日の振り返りの入口と、これまでの記録（普段は閉じておく） */}
+        <Card title="きょうの記録" right={todayReflection ? <Hint>振り返り済み ✓</Hint> : workEnd ? <Hint>{workEnd}まで</Hint> : undefined}>
+          {!showReflection && <Row><Button small title={todayReflection ? "振り返りを答え直す" : "今すぐ振り返る"} disabled={busy || isDemo}
+            onPress={() => { setReflectionOpen(true); scroll.current?.scrollTo({ y: 0, animated: true }); }} /></Row>}
+          <Details title="これまでの記録">
+            {reflectionSummary && reflectionSummary.to === reflectionDay && !!reflectionSummary.answered_days && <>
+              <Label>この7日間</Label>
+              <View style={s.stats}>
+                <Stat value={`${reflectionSummary.answered_days}/7`} text="回答" />
+                <Stat value={String(reflectionSummary.achievement.done)} text="できた" />
+                <Stat value={String(reflectionSummary.achievement.partial)} text="途中まで" />
+                <Stat value={String(reflectionSummary.achievement.not_done)} text="できなかった" />
+                <Stat value={`★${reflectionSummary.average_satisfaction?.toFixed(1)}`} text="満足度" />
+              </View>
+            </>}
+            {!!reflections.length && <Label>振り返り</Label>}
+            {reflections.slice(0, 7).map(r => <View key={r.day} style={s.listRow}>
+              <Text style={s.taskTitle}>{shortDate(r.day)}　<Text style={ui.hint}>{label(achievements, r.achievement)} · ★{r.satisfaction} · {label(conditions, r.tiredness)}</Text></Text>
+              {!!r.comment && <Text style={s.body}>{r.comment}</Text>}
+            </View>)}
+            <Label>取り組み・休息</Label>
+            {!activities.length && <Hint>提案から選ぶと、ここに記録されます。</Hint>}
+            {activities.map(activity => <View key={activity.id} style={s.listRow}>
+              <Text style={s.taskTitle}>{activity.task_title ?? "ひと休み"}</Text>
+              <Text style={ui.hint}>{new Date(activity.created_at).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })} · {label(conditions, activity.condition_level)}</Text>
+            </View>)}
+          </Details>
+        </Card>
       </View>
 
       {/* タスク：追加フォームと一覧 */}
@@ -286,51 +381,6 @@ export default function Dashboard({ username, logout }: { username: string; logo
           changed={linked => { setCalendarLinked(linked); invalidate(); }} />
       </View>
 
-      {/* 振り返り：今日の入力・7日間のまとめ・これまでの記録 */}
-      <View style={[s.stack, hidden("reflection")]}>
-        <Card title="今日の振り返り" right={todayReflection && <Hint>保存済み</Hint>}>
-          <Hint>1日の終わりに。同じ日なら答え直せます。</Hint>
-          <Label>タスクはできた？</Label>
-          <Row>{achievements.map(([key, text]) => <Button key={key} title={text} selected={achievement === key}
-            disabled={busy || isDemo} onPress={() => setAchievement(key)} />)}</Row>
-          <Label>AIの提案は役に立った？</Label>
-          <Stars value={satisfaction} set={setSatisfaction} disabled={busy || isDemo} />
-          <Label>今の疲れ具合は？</Label>
-          <Row>{conditions.map(([key, text]) => <Button key={key} small title={text} selected={tiredness === key}
-            disabled={busy || isDemo} onPress={() => setTiredness(key)} />)}</Row>
-          <TextInput accessibilityLabel="ひとこと" style={ui.input} value={comment} onChangeText={setComment} editable={!busy && !isDemo}
-            placeholder="ひとこと（任意）" placeholderTextColor="#64748b" maxLength={200} multiline />
-          <Button primary title={todayReflection ? "更新する" : "保存する"} disabled={busy || !connected || isDemo}
-            onPress={() => void run(saveReflection)} />
-        </Card>
-
-        {reflectionSummary && reflectionSummary.to === reflectionDay && <Card title="この7日間">
-          {reflectionSummary.answered_days ? <>
-            <View style={s.stats}>
-              <Stat value={`${reflectionSummary.answered_days}/7`} text="回答" />
-              <Stat value={String(reflectionSummary.achievement.done)} text="できた" />
-              <Stat value={String(reflectionSummary.achievement.partial)} text="途中まで" />
-              <Stat value={String(reflectionSummary.achievement.not_done)} text="できなかった" />
-              <Stat value={`★${reflectionSummary.average_satisfaction?.toFixed(1)}`} text="満足度" />
-            </View>
-          </> : <Hint>まだ振り返りがありません。</Hint>}
-        </Card>}
-
-        {reflections.some(r => r !== todayReflection) && <Card title="これまでの振り返り">
-          {reflections.filter(r => r !== todayReflection).slice(0, 7).map(r => <View key={r.day} style={s.listRow}>
-            <Text style={s.taskTitle}>{shortDate(r.day)}　<Text style={ui.hint}>{label(achievements, r.achievement)} · ★{r.satisfaction} · {label(conditions, r.tiredness)}</Text></Text>
-            {!!r.comment && <Text style={s.body}>{r.comment}</Text>}
-          </View>)}
-        </Card>}
-
-        <Card title="取り組み・休息の記録">
-          {!activities.length && <Hint>提案から選ぶと、ここに記録されます。</Hint>}
-          {activities.map(activity => <View key={activity.id} style={s.listRow}>
-            <Text style={s.taskTitle}>{activity.task_title ?? "ひと休み"}</Text>
-            <Text style={ui.hint}>{new Date(activity.created_at).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })} · {label(conditions, activity.condition_level)}</Text>
-          </View>)}
-        </Card>
-      </View>
     </ScrollView>
   </SafeAreaView></SafeAreaProvider>;
 }

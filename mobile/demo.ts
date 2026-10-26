@@ -17,6 +17,7 @@ export function demoResponse(path: string, method: string): unknown {
     case "/tasks": return tasks;
     case "/activities": return [];
     case "/reflections": return [];
+    case "/reflections/plan": return { day: new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10), end_time: "18:00" };
     case "/reflections/summary": {
       const end = new Date(Date.now() + 9 * 3600000);
       const start = new Date(end);

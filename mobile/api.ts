@@ -17,6 +17,7 @@ export type Reflection = {
   day: string; achievement: Achievement; satisfaction: number;
   tiredness: ConditionLevel; comment: string; updated_at: string;
 };
+export type WorkPlan = { day: string; end_time: string };
 export type ReflectionSummary = {
   from: string; to: string; answered_days: number;
   achievement: Record<Achievement, number>; average_satisfaction: number | null;

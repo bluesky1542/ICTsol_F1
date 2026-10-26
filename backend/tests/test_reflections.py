@@ -61,6 +61,26 @@ class ReflectionTest(unittest.TestCase):
         self.assertEqual(self.client.get("/api/reflections").status_code, 401)
         self.assertEqual(self.client.put("/api/reflections/today", json=self.answer).status_code, 401)
 
+    def test_work_plan_saved_per_day_and_user(self):
+        self.assertIsNone(self.client.get("/api/reflections/plan").json())
+        saved = self.client.put("/api/reflections/plan", json={"end_time": "18:30"})
+        self.assertEqual(saved.status_code, 200, saved.text)
+        self.assertEqual(saved.json(), {"day": today(), "end_time": "18:30"})
+        self.client.put("/api/reflections/plan", json={"end_time": "20:00"})
+        self.assertEqual(self.client.get("/api/reflections/plan").json()["end_time"], "20:00")
+        # 前日の予定は今日には引き継がない。
+        with database() as db:
+            db.execute("UPDATE work_plans SET day='2000-01-01'")
+        self.assertIsNone(self.client.get("/api/reflections/plan").json())
+        self.client.put("/api/reflections/plan", json={"end_time": "17:00"})
+        self.login("plan_other")
+        self.assertIsNone(self.client.get("/api/reflections/plan").json())
+        for bad in ["24:00", "9:00", "18:60", "", "18:00:00"]:
+            self.assertEqual(self.client.put("/api/reflections/plan", json={"end_time": bad}).status_code, 422, bad)
+        self.assertEqual(self.client.put("/api/reflections/plan", json={"end_time": "18:00", "user_id": 1}).status_code, 422)
+        del self.client.headers["Authorization"]
+        self.assertEqual(self.client.get("/api/reflections/plan").status_code, 401)
+
     def test_empty_summary(self):
         with patch("app.reflections.today", return_value="2026-10-19"):
             response = self.client.get("/api/reflections/summary")

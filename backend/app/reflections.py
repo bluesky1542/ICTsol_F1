@@ -4,7 +4,7 @@ from fastapi import APIRouter
 
 from .auth import User
 from .database import database
-from .models import ReflectionInput
+from .models import ReflectionInput, WorkPlanInput
 
 router = APIRouter(prefix="/api/reflections")
 JAPAN = timezone(timedelta(hours=9))
@@ -52,3 +52,21 @@ def reflection_summary(user: User):
         "from": start, "to": end, "answered_days": len(rows), "achievement": achievement,
         "average_satisfaction": round(sum(row["satisfaction"] for row in rows) / len(rows), 1) if rows else None,
     }
+
+
+@router.get("/plan")
+def get_plan(user: User):
+    # 今日の作業終了予定。振り返りの通知時刻を決めるために使う。
+    with database() as db:
+        row = db.execute("SELECT day,end_time FROM work_plans WHERE user_id=? AND day=?", (user["id"], today())).fetchone()
+    return dict(row) if row else None
+
+
+@router.put("/plan")
+def save_plan(data: WorkPlanInput, user: User):
+    with database() as db:
+        return dict(db.execute(
+            "INSERT INTO work_plans VALUES (?,?,?,?) ON CONFLICT(user_id,day) DO UPDATE SET "
+            "end_time=excluded.end_time,updated_at=excluded.updated_at RETURNING day,end_time",
+            (user["id"], today(), data.end_time, datetime.now(timezone.utc).isoformat()),
+        ).fetchone())
