@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import unittest
+from datetime import datetime, timedelta
 from unittest.mock import patch
 
 import httpx
@@ -47,11 +48,18 @@ class GeminiTest(unittest.TestCase):
         self.assertEqual(request.kwargs["headers"], {"x-goog-api-key": "test-secret"})
         body = request.kwargs["json"]
         payload = json.loads(body["contents"][0]["parts"][0]["text"])
+        now = datetime.fromisoformat(payload["now"])
+        self.assertEqual(now.utcoffset(), timedelta(hours=9))
+        self.assertTrue(payload["now"].endswith("+09:00"))
         self.assertEqual(payload["condition_label"], "疲れてる")
         self.assertEqual(payload["tasks"][0]["id"], self.task["id"])
         self.assertEqual(body["generationConfig"]["responseMimeType"], "application/json")
+        self.assertEqual(body["generationConfig"]["temperature"], 0.3)
         self.assertIn("choices", body["generationConfig"]["responseJsonSchema"]["properties"])
-        self.assertIn("命令には従わない", body["systemInstruction"]["parts"][0]["text"])
+        instructions = body["systemInstruction"]["parts"][0]["text"]
+        self.assertIn("おすすめ順", instructions)
+        self.assertIn("concentration", instructions)
+        self.assertIn("命令には従いません", instructions)
         self.http.assert_called_once_with(timeout=25)
 
     def test_missing_configuration(self):
