@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { CalendarSnapshot, dayIsCovered, dayKey, eventsForDay, eventTime, monthDays } from "./calendarView";
 
 const weekdays = ["月", "火", "水", "木", "金", "土", "日"];
+const range = (value: string) => new Date(value).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 
 function Control({ title, label, onPress }: { title: string; label?: string; onPress: () => void }) {
   return <Pressable accessibilityRole="button" accessibilityLabel={label ?? title} onPress={onPress} style={s.control}>
@@ -30,14 +31,12 @@ export default function ScheduleCalendar({ snapshot }: { snapshot: CalendarSnaps
   }
 
   return <View style={s.calendar}>
-    <Text style={s.heading}>自分の予定</Text>
     <View style={s.toolbar}>
       <Control title="‹" label="前の月" onPress={() => moveMonth(-1)} />
       <Text accessibilityLiveRegion="polite" style={s.month}>{month.getFullYear()}年{month.getMonth() + 1}月</Text>
       <Control title="›" label="次の月" onPress={() => moveMonth(1)} />
       <Control title="今日" onPress={() => chooseDate(new Date())} />
     </View>
-    <Text style={s.caption}>端末の現地時刻で表示 · 日付を押すと予定を確認できます</Text>
     <View style={s.week}>{weekdays.map((name, index) => <View key={name} style={s.weekCell}>
       <Text style={[s.weekday, index === 5 && s.saturday, index === 6 && s.sunday]}>{name}</Text>
     </View>)}</View>
@@ -53,14 +52,13 @@ export default function ScheduleCalendar({ snapshot }: { snapshot: CalendarSnaps
         </Pressable>;
       })}
     </View>)}
-    <Text style={s.caption}>● 保存済みの予定の件数 · 追加・端末取り込みの対象は今後7日間です</Text>
-    {snapshot.sync?.source === "imported" && <Text style={s.caption}>取り込み範囲：{new Date(snapshot.sync.window_start).toLocaleString("ja-JP")} 〜 {new Date(snapshot.sync.window_end).toLocaleString("ja-JP")}</Text>}
+    {snapshot.sync?.source === "imported" && <Text style={s.caption}>取り込み範囲：{range(snapshot.sync.window_start)} 〜 {range(snapshot.sync.window_end)}</Text>}
     <View style={s.agenda}>
       <View style={s.agendaHeading}><Text style={s.heading}>{selected.getMonth() + 1}月{selected.getDate()}日（{weekdays[(selected.getDay() + 6) % 7]}）</Text>
         <Text style={s.caption}>{entries.length}件</Text></View>
-      {!snapshot.sync ? <Text style={s.caption}>まだ予定を読み込んでいません。下から予定時間を追加するか、端末のカレンダーを取り込んでください。</Text>
-        : (!covered || snapshot.sync.source === "manual") && <Text style={s.caption}>{snapshot.sync.source === "imported" ? "この日は取り込み範囲の一部または範囲外です。予定がすべて表示されているとは限りません。" : "手入力で保存した予定だけを表示しています。"}</Text>}
-      {!entries.length && <Text style={s.empty}>{covered && snapshot.sync?.source === "imported" ? "取り込み済みの予定はありません。" : "保存済みの予定はありません。"}</Text>}
+      {!snapshot.sync ? <Text style={s.caption}>まだ予定がありません。下から追加できます。</Text>
+        : (!covered || snapshot.sync.source === "manual") && <Text style={s.caption}>{snapshot.sync.source === "imported" ? "この日は取り込み範囲外のため、表示されていない予定があるかもしれません。" : "手入力した予定だけを表示しています。"}</Text>}
+      {!entries.length && <Text style={s.empty}>予定はありません。</Text>}
       {entries.map(event => <View key={event.event_key} style={s.eventRow}>
         <View style={s.rail}><View style={s.eventDot} /><View style={s.eventLine} /></View>
         <View style={s.event}>
@@ -70,7 +68,6 @@ export default function ScheduleCalendar({ snapshot }: { snapshot: CalendarSnaps
         </View>
       </View>)}
     </View>
-    <Text style={s.caption}>予定名は保存していないため、時間帯を「予定あり」と表示します。Googleカレンダーの予定を自動取得する機能ではありません。</Text>
   </View>;
 }
 

@@ -5,7 +5,9 @@ import { StatusBar } from "expo-status-bar";
 import { Achievement, Activity, api, Condition, ConditionLevel, Level, Reflection, ReflectionSummary, Suggestions, Task } from "./api";
 import CalendarPanel from "./CalendarPanel";
 import { isDemo } from "./demo";
+import { Button, Card, colors, Details, Hint, Input, Label, Row, Stars, Tabs, s as ui } from "./ui";
 
+type Tab = "now" | "tasks" | "calendar" | "reflection";
 const levels: [Level, string][] = [["low", "低"], ["medium", "中"], ["high", "高"]];
 const conditions: [ConditionLevel, string][] = [
   ["slightly_tired", "少し疲れてる"],
@@ -15,28 +17,14 @@ const conditions: [ConditionLevel, string][] = [
   ["good", "元気"],
 ];
 const achievements: [Achievement, string][] = [["done", "できた"], ["partial", "途中まで"], ["not_done", "できなかった"]];
-const satisfactions = [1, 2, 3, 4, 5];
+const availablePresets = ["15", "30", "60", "90"];
+const minutePresets = ["15", "30", "60"];
 // サーバーと同じく日本時間の日付で「今日」を判定する。
 const japanToday = (time: number) => new Date(time + 9 * 3600000).toISOString().slice(0, 10);
-
-function Button({ title, onPress, disabled = false, selected = false }: {
-  title: string; onPress: () => void; disabled?: boolean; selected?: boolean;
-}) {
-  return <Pressable accessibilityRole="button" accessibilityState={{ disabled, selected }}
-    onPress={onPress} disabled={disabled} style={[s.button, selected && s.selected, disabled && s.disabled]}>
-    <Text style={[s.buttonText, selected && s.selectedText]}>{title}</Text>
-  </Pressable>;
-}
-
-function Input({ label, value, set, numeric = false, placeholder = "", disabled = false }: {
-  label: string; value: string; set: (text: string) => void; numeric?: boolean; placeholder?: string; disabled?: boolean;
-}) {
-  return <View style={s.field}><Text style={s.label}>{label}</Text><TextInput accessibilityLabel={label}
-    style={s.input} value={value} onChangeText={set} editable={!disabled} keyboardType={numeric ? "number-pad" : "default"}
-    placeholder={placeholder} placeholderTextColor="#64748b" maxLength={numeric ? 4 : 120} /></View>;
-}
+const shortDate = (day: string) => `${Number(day.slice(5, 7))}/${Number(day.slice(8, 10))}`;
 
 export default function Dashboard({ username, logout }: { username: string; logout: () => Promise<void> }) {
+  const [tab, setTab] = useState<Tab>("now");
   const [tasks, setTasks] = useState<Task[]>([]);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [condition, setCondition] = useState<Condition | null>(null);
@@ -54,11 +42,14 @@ export default function Dashboard({ username, logout }: { username: string; logo
   const [concentration, setConcentration] = useState<Level>("medium");
   const [place, setPlace] = useState("");
   const [editing, setEditing] = useState<number | null>(null);
+  const [showDetails, setShowDetails] = useState(false);
   const [available, setAvailable] = useState("30");
+  const [customAvailable, setCustomAvailable] = useState(false);
   const [currentPlace, setCurrentPlace] = useState("");
   const [suggestions, setSuggestions] = useState<Suggestions | null>(null);
   const [selected, setSelected] = useState<number | "rest" | null>(null);
   const [calendarLinked, setCalendarLinked] = useState(false);
+  const [calendarReload, setCalendarReload] = useState(0);
   const [useCalendar, setUseCalendar] = useState(true);
   const [reflections, setReflections] = useState<Reflection[]>([]);
   const [reflectionSummary, setReflectionSummary] = useState<ReflectionSummary | null>(null);
@@ -85,7 +76,6 @@ export default function Dashboard({ username, logout }: { username: string; logo
     lock.current = true; setBusy(true); setError(""); setNotice("");
     try { await work(); } catch (e) {
       setError(e instanceof Error ? e.message : "通信できませんでした。");
-      scroll.current?.scrollTo({ y: 0, animated: true });
     }
     finally { lock.current = false; setBusy(false); }
   }
@@ -101,9 +91,15 @@ export default function Dashboard({ username, logout }: { username: string; logo
   }
   useEffect(() => { void run(refresh); }, []);
 
+  function changeTab(next: Tab) { setTab(next); scroll.current?.scrollTo({ y: 0, animated: false }); }
   function resetForm() {
     setEditing(null); setTitle(""); setMinutes("20"); setDeadline("");
-    setPriority("medium"); setConcentration("medium"); setPlace("");
+    setPriority("medium"); setConcentration("medium"); setPlace(""); setShowDetails(false);
+  }
+  function startEdit(task: Task) {
+    setEditing(task.id); setTitle(task.title); setMinutes(String(task.minutes)); setDeadline(task.deadline || "");
+    setPriority(task.priority); setConcentration(task.concentration); setPlace(task.place); setShowDetails(true);
+    scroll.current?.scrollTo({ y: 0, animated: true });
   }
   function integer(value: string) {
     if (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 1440) throw new Error("時間は1〜1440分の整数で入力してください。");
@@ -121,11 +117,14 @@ export default function Dashboard({ username, logout }: { username: string; logo
     setTasks(previous => editing === null ? [saved, ...previous] : previous.map(t => t.id === saved.id ? saved : t));
     resetForm(); invalidate(); setNotice("タスクを保存しました。");
   }
-  const levelLabel = (value: Level) => levels.find(([key]) => key === value)?.[1];
+  async function toggleTask(task: Task) {
+    const saved = await api<Task>(`/tasks/${task.id}`, "PATCH", { completed: !task.completed });
+    setTasks(previous => previous.map(t => t.id === saved.id ? saved : t)); invalidate();
+  }
   async function choose(taskId: number | null) {
     const saved = await api<Activity>("/activities", "POST", { task_id: taskId });
     setActivities(previous => [saved, ...previous].slice(0, 50));
-    setSelected(taskId ?? "rest"); setNotice("選択を履歴に保存しました。");
+    setSelected(taskId ?? "rest"); setNotice(taskId === null ? "休息を記録しました。ゆっくり休みましょう。" : "取り組むタスクを記録しました。");
   }
   async function saveReflection() {
     if (japanToday(Date.now()) !== reflectionDay) {
@@ -138,149 +137,232 @@ export default function Dashboard({ username, logout }: { username: string; logo
     setReflectionSummary(null);
     setNotice("今日の振り返りを保存しました。おつかれさまでした。");
     try { setReflectionSummary(await api<ReflectionSummary>("/reflections/summary")); }
-    catch { setNotice("今日の振り返りは保存済みです。サマリーを取得できなかったため、最新の状態に更新してください。"); }
+    catch { setNotice("今日の振り返りは保存済みです。まとめは↻で更新してください。"); }
   }
   const label = <T,>(options: [T, string][], value: T) => options.find(([key]) => key === value)?.[1];
+  const open = tasks.filter(t => !t.completed);
+  const done = tasks.filter(t => t.completed);
+  const places = [...new Set(tasks.map(t => t.place.trim()).filter(Boolean))];
+  const aiBlocked = !connected ? "サーバーに接続できていません。↻で再読み込みしてください。"
+    : !aiConfigured ? "AI提案は準備中です。"
+    : !conditionFresh ? "先に「今の調子」を選んでください。" : "";
+  const setAvailableAndReset = (value: string) => { setAvailable(value); invalidate(); };
+
+  // 描画のたびに部品を作り直さないよう、関数として呼び出す。
+  function taskRow(task: Task) {
+    const meta = [`${task.minutes}分`, task.deadline && `締切 ${shortDate(task.deadline)}`, task.place].filter(Boolean).join(" · ");
+    return <View key={task.id} style={s.taskRow}>
+      <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: task.completed, disabled: busy }}
+        accessibilityLabel={`${task.title}を${task.completed ? "未完了に戻す" : "完了にする"}`} disabled={busy}
+        onPress={() => void run(() => toggleTask(task))} style={s.checkArea}>
+        <View style={[s.check, task.completed && s.checkOn]}>{task.completed && <Text style={s.checkMark}>✓</Text>}</View>
+      </Pressable>
+      <Pressable accessibilityRole="button" accessibilityLabel={`${task.title}を編集`} disabled={busy}
+        onPress={() => startEdit(task)} style={s.taskBody}>
+        <Text style={[s.taskTitle, task.completed && s.done]}>{task.title}</Text>
+        <View style={s.metaRow}>
+          <Text style={ui.hint}>{meta}</Text>
+          {task.priority === "high" && <Text style={s.badge}>優先</Text>}
+          {task.concentration === "high" && <Text style={s.badge}>集中</Text>}
+        </View>
+      </Pressable>
+    </View>;
+  }
+
+  const hidden = (key: Tab) => tab !== key && s.hidden;
 
   return <SafeAreaProvider><SafeAreaView style={s.root}><StatusBar style="dark" />
-    <ScrollView ref={scroll} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
-      <Text style={s.eyebrow}>ICTsol F1 · 毎日を、自分のペースで</Text>
-      <Text style={s.heading}>いま、できそうなこと。</Text>
-      <Text style={s.muted}>調子と空き時間に合わせて、AIと次の一歩を選びましょう。</Text>
-      {isDemo && <Text style={s.muted}>画面確認用デモ：タスクはサンプルです。データの保存・AIの実行は行いません。</Text>}
-      <View style={s.row}><Button title={busy ? "処理中…" : "最新の状態に更新"} disabled={busy} onPress={() => void run(refresh)} />
-        <Text style={s.muted}>{username} さん</Text>
-        <Button title="ログアウト" disabled={busy} onPress={() => void run(logout)} /></View>
+    <View style={s.top}>
+      <View style={s.header}>
+        <Text style={s.appName}>ICTsol F1</Text>
+        <Text numberOfLines={1} style={s.user}>{username}</Text>
+        <Button small title={busy ? "…" : "↻"} label="最新の状態に更新" disabled={busy}
+          onPress={() => void run(async () => { await refresh(); setCalendarReload(n => n + 1); })} />
+        <Button small title="ログアウト" disabled={busy} onPress={() => void run(logout)} />
+      </View>
+      <Tabs tabs={[["now", "いま"], ["tasks", `タスク${open.length ? ` ${open.length}` : ""}`], ["calendar", "予定"], ["reflection", "振り返り"]]}
+        value={tab} set={changeTab} />
+      {isDemo && <Hint>デモ画面です（保存・AIは動きません）</Hint>}
       {!!error && <Text accessibilityRole="alert" style={s.error}>{error}</Text>}
       {!!notice && <Text accessibilityLiveRegion="polite" style={s.notice}>{notice}</Text>}
+    </View>
+    <ScrollView ref={scroll} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
 
-      <View style={s.card}><Text style={s.section}>1. 今の調子</Text>
-        <View style={s.row}>{conditions.map(([key, label]) => <Button key={key} title={label} disabled={busy || !connected}
-          selected={conditionFresh && condition?.level === key} onPress={() => void run(async () => {
-            const saved = await api<Condition>("/condition", "PUT", { level: key });
-            setCondition(saved); setNow(Date.now()); invalidate(); setNotice("今の調子を保存しました。");
-          })} />)}</View>
-        <Text style={s.muted}>{condition ? `前回入力：${new Date(condition.updated_at).toLocaleString("ja-JP")}。今の状態に合わせて押し直せます。` : "いずれかを選ぶと保存されます。"}</Text>
-        {condition && !conditionFresh && <Text style={s.error}>今日の調子を選び直してください。日本時間で日付が変わると再入力が必要です。</Text>}
-      </View>
+      {/* いま：調子 → 時間 → 場所 → 提案 の順に上から操作する */}
+      <View style={[s.stack, hidden("now")]}>
+        <Card title="今の調子は？">
+          <Row>{conditions.map(([key, text]) => <Button key={key} title={text} disabled={busy || !connected}
+            selected={conditionFresh && condition?.level === key} onPress={() => void run(async () => {
+              const saved = await api<Condition>("/condition", "PUT", { level: key });
+              setCondition(saved); setNow(Date.now()); invalidate(); setNotice("今の調子を保存しました。");
+            })} />)}</Row>
+          {condition && !conditionFresh && <Hint warn>日付が変わりました。今日の調子を選んでください。</Hint>}
+        </Card>
 
-      <View style={s.card}><Text style={s.section}>2. {editing === null ? "タスクを登録" : "タスクを編集"}</Text>
-        <Input label="タスク名" value={title} set={setTitle} placeholder="例：レポートの下書き" disabled={busy} />
-        <Input label="所要時間（分）" value={minutes} set={setMinutes} numeric disabled={busy} />
-        <Input label="締切（任意）" value={deadline} set={setDeadline} placeholder="2026-10-15" disabled={busy} />
-        <Text style={s.label}>優先度</Text><View style={s.row}>{levels.map(([key, label]) => <Button key={key} title={label}
-          selected={priority === key} disabled={busy} onPress={() => setPriority(key)} />)}</View>
-        <Text style={s.label}>必要な集中度</Text><View style={s.row}>{levels.map(([key, label]) => <Button key={key} title={label}
-          selected={concentration === key} disabled={busy} onPress={() => setConcentration(key)} />)}</View>
-        <Input label="実行場所（空欄ならどこでも）" value={place} set={setPlace} placeholder="例：自宅" disabled={busy} />
-        <View style={s.row}><Button title={editing === null ? "タスクを追加" : "変更を保存"} selected disabled={busy || !connected} onPress={() => void run(saveTask)} />
-          {editing !== null && <Button title="編集をやめる" disabled={busy} onPress={resetForm} />}</View>
-      </View>
+        <Card title="AIに次の一歩を提案してもらう">
+          <Label>使える時間</Label>
+          <Row>
+            {availablePresets.map(value => <Button key={value} small title={`${value}分`} disabled={busy}
+              selected={!customAvailable && available === value}
+              onPress={() => { setCustomAvailable(false); setAvailableAndReset(value); }} />)}
+            <Button small title="その他" disabled={busy} selected={customAvailable || !availablePresets.includes(available)}
+              onPress={() => setCustomAvailable(true)} />
+          </Row>
+          {(customAvailable || !availablePresets.includes(available)) &&
+            <Input label="使える時間（分）" hideLabel value={available} set={setAvailableAndReset} numeric placeholder="分" disabled={busy} />}
+          {calendarLinked && <Row><Button small title={useCalendar ? "✓ 次の予定までに収める" : "予定を考慮しない"} selected={useCalendar} disabled={busy}
+            onPress={() => { setUseCalendar(!useCalendar); invalidate(); }} /></Row>}
 
-      <CalendarPanel disabled={busy || !connected} run={run} changed={linked => { setCalendarLinked(linked); invalidate(); }} />
-      <View style={s.card}><Text style={s.section}>3. AIに提案してもらう</Text>
-        {calendarLinked && <><Button title={useCalendar ? "✓ 取り込んだ予定を考慮する" : "予定を考慮しない"} selected={useCalendar} disabled={busy}
-          onPress={() => { setUseCalendar(!useCalendar); invalidate(); }} /><Text style={s.muted}>保存済み予定から次の予定までの時間を計算します。端末から取り込んだ予定は変更後や24時間経過後に再取り込みしてください。手入力の予定にこの制限はありません。</Text></>}
-        <Input label="いま使える時間（分）" value={available} set={v => { setAvailable(v); invalidate(); }} numeric disabled={busy} />
-        <Input label="いまいる場所" value={currentPlace} set={v => { setCurrentPlace(v); invalidate(); }} placeholder="例：自宅（タスクの場所と一致）" disabled={busy} />
-        <Text style={s.muted}>候補タスクの内容・入力した調子・空き時間・場所、過去7回分の朝の調子と振り返り（コメントを含む）をGoogle（Gemini）へ送信します。</Text>
-        <Text style={s.muted}>無料枠には利用上限があります。課金を有効にすると料金が発生する場合があります。無料枠では送信内容がGoogleの製品改善に利用される場合があるため、個人情報・機密情報を入力しないでください。</Text>
-        {!aiConfigured && <Text style={s.muted}>AI提案は準備中です。タスクや予定の保存は利用できます。</Text>}
-        <Button title={busy ? "処理中…" : "AIの提案を取得"} selected disabled={busy || !connected || !conditionFresh || !aiConfigured}
-          onPress={() => void run(async () => {
-            invalidate();
-            const result = await api<Suggestions>("/recommendations", "POST", { available_minutes: integer(available), place: currentPlace.trim(), use_calendar: calendarLinked && useCalendar });
-            setSuggestions(result);
-          })} />
-        {suggestions && <View style={s.stack}><Text style={s.muted}>今回考慮した空き時間：{suggestions.available_minutes}分</Text><Text style={s.label}>{suggestions.source === "ai" ? "AIからの候補（どれか1つを選べます）" : "条件に合う候補がありません"}</Text>
-          {suggestions.choices.map(({ task, reason }) => <View key={task.id} style={s.suggestion}>
-            <Text style={s.taskTitle}>{task.title} · {task.minutes}分</Text><Text style={s.body}>{reason}</Text>
-            <Button title={selected === task.id ? "選択中" : "これに取り組む"} selected={selected === task.id} disabled={busy || isDemo || selected === task.id} onPress={() => void run(() => choose(task.id))} />
+          <Label>いる場所</Label>
+          {!!places.length && <Row>{places.map(p => <Button key={p} small title={p} disabled={busy}
+            selected={currentPlace.trim() === p} onPress={() => { setCurrentPlace(currentPlace.trim() === p ? "" : p); invalidate(); }} />)}</Row>}
+          <Input label="いる場所" hideLabel value={currentPlace} set={v => { setCurrentPlace(v); invalidate(); }} placeholder="例：自宅（空欄＝どこでも）" disabled={busy} />
+
+          <Button primary title={busy ? "考え中…" : "提案してもらう"} disabled={busy || !!aiBlocked}
+            onPress={() => void run(async () => {
+              invalidate();
+              const result = await api<Suggestions>("/recommendations", "POST", { available_minutes: integer(available), place: currentPlace.trim(), use_calendar: calendarLinked && useCalendar });
+              setSuggestions(result);
+            })} />
+          {!!aiBlocked && <Hint>{aiBlocked}</Hint>}
+          <Details title="送信先：Google（Gemini）">
+            <Hint>候補タスク・今の調子・使える時間・場所と、過去7回分の朝の調子と振り返り（コメントを含む）を送信します。</Hint>
+            <Hint>無料枠では送信内容がGoogleの製品改善に使われる場合があります。個人情報・機密情報は入力しないでください。</Hint>
+          </Details>
+        </Card>
+
+        {suggestions && <Card title={suggestions.source === "ai" ? "どれか1つ選んでください" : "今できるタスクはありません"}
+          right={<Hint>{suggestions.available_minutes}分</Hint>}>
+          {suggestions.choices.map(({ task, reason }, index) => <View key={task.id} style={s.suggestion}>
+            <Text style={s.taskTitle}>{index === 0 ? "おすすめ　" : ""}{task.title}　<Text style={ui.hint}>{task.minutes}分</Text></Text>
+            <Text style={s.body}>{reason}</Text>
+            <Button title={selected === task.id ? "✓ 取り組み中" : "これにする"} selected={selected === task.id}
+              disabled={busy || isDemo || selected === task.id} onPress={() => void run(() => choose(task.id))} />
           </View>)}
-          <View style={s.suggestion}><Text style={s.taskTitle}>ひと休みする</Text><Text style={s.body}>{suggestions.rest_reason}</Text>
-            <Button title={selected === "rest" ? "休息を選択中" : "休息を選ぶ"} selected={selected === "rest"} disabled={busy || isDemo || selected === "rest"} onPress={() => void run(() => choose(null))} /></View>
-          <Text style={s.muted}>選択は履歴に保存されます。終わったタスクは下の一覧で「完了にする」を押してください。</Text>
-        </View>}
+          <View style={[s.suggestion, s.rest]}>
+            <Text style={s.taskTitle}>ひと休みする</Text>
+            <Text style={s.body}>{suggestions.rest_reason}</Text>
+            <Button title={selected === "rest" ? "✓ 休憩中" : "休む"} selected={selected === "rest"}
+              disabled={busy || isDemo || selected === "rest"} onPress={() => void run(() => choose(null))} />
+          </View>
+        </Card>}
       </View>
 
-      <View style={s.card}><Text style={s.section}>タスク一覧 · 未完了 {tasks.filter(t => !t.completed).length}件</Text>
-        {!tasks.length && <Text style={s.muted}>まだタスクがありません。まずは1つ登録してみましょう。</Text>}
-        {[...tasks].sort((a, b) => Number(a.completed) - Number(b.completed)).map(task => <View key={task.id} style={s.task}>
-          <Text style={[s.taskTitle, task.completed && s.done]}>{task.completed ? "✓ " : ""}{task.title}</Text>
-          <Text style={s.muted}>{task.minutes}分 · 優先度 {levelLabel(task.priority)} · 集中度 {levelLabel(task.concentration)}</Text>
-          <Text style={s.muted}>締切 {task.deadline || "なし"} · 場所 {task.place || "どこでも"}</Text>
-          <View style={s.row}><Button title={task.completed ? "未完了に戻す" : "完了にする"} disabled={busy} onPress={() => void run(async () => {
-            const saved = await api<Task>(`/tasks/${task.id}`, "PATCH", { completed: !task.completed });
-            setTasks(previous => previous.map(t => t.id === saved.id ? saved : t)); invalidate();
-          })} /><Button title="編集" disabled={busy} onPress={() => {
-            setEditing(task.id); setTitle(task.title); setMinutes(String(task.minutes)); setDeadline(task.deadline || "");
-            setPriority(task.priority); setConcentration(task.concentration); setPlace(task.place); setNotice("上の「タスクを編集」で変更できます。");
-            scroll.current?.scrollTo({ y: 0, animated: true });
-          }} /></View>
-        </View>)}
-      </View>
-      <View style={s.card}><Text style={s.section}>取り組み・休息の履歴</Text>
-        {!activities.length && <Text style={s.muted}>タスクや休息を選ぶと、ここに記録されます。</Text>}
-        {activities.map(activity => <View key={activity.id} style={s.task}>
-          <Text style={s.taskTitle}>{activity.task_title ?? "ひと休みする"}</Text>
-          <Text style={s.muted}>{new Date(activity.created_at).toLocaleString("ja-JP")} · {conditions.find(([key]) => key === activity.condition_level)?.[1]}</Text>
-        </View>)}
-        {!!activities.length && <Text style={s.muted}>直近50件を表示しています。記録は選択の履歴で、実行・完了の確認ではありません。</Text>}
+      {/* タスク：追加フォームと一覧 */}
+      <View style={[s.stack, hidden("tasks")]}>
+        <Card title={editing === null ? "タスクを追加" : "タスクを編集"}>
+          <Input label="タスク名" hideLabel value={title} set={setTitle} placeholder="タスク名（例：レポートの下書き）" disabled={busy} />
+          <Label>かかる時間</Label>
+          <Row>
+            {minutePresets.map(value => <Button key={value} small title={`${value}分`} selected={minutes === value} disabled={busy} onPress={() => setMinutes(value)} />)}
+            <View style={s.minutesInput}><Input label="かかる時間（分）" hideLabel value={minutes} set={setMinutes} numeric placeholder="分" disabled={busy} /></View>
+            <Text style={ui.hint}>分</Text>
+          </Row>
+          <Details title="詳細（締切・優先度・集中度・場所）" open={showDetails} onToggle={setShowDetails}>
+            <Input label="締切" value={deadline} set={setDeadline} placeholder="2026-10-15" disabled={busy} />
+            <Label>優先度</Label><Row>{levels.map(([key, text]) => <Button key={key} small title={text}
+              selected={priority === key} disabled={busy} onPress={() => setPriority(key)} />)}</Row>
+            <Label>必要な集中度</Label><Row>{levels.map(([key, text]) => <Button key={key} small title={text}
+              selected={concentration === key} disabled={busy} onPress={() => setConcentration(key)} />)}</Row>
+            <Input label="場所（空欄ならどこでも）" value={place} set={setPlace} placeholder="例：自宅" disabled={busy} />
+          </Details>
+          <Row><Button primary title={editing === null ? "追加" : "保存"} disabled={busy || !connected} onPress={() => void run(saveTask)} />
+            {editing !== null && <Button title="やめる" disabled={busy} onPress={resetForm} />}</Row>
+        </Card>
+
+        <Card title={`やること ${open.length}件`}>
+          {!tasks.length && <Hint>まだタスクがありません。上から追加しましょう。</Hint>}
+          {open.map(taskRow)}
+          {!!done.length && <Details title={`完了済み（${done.length}件）`}>
+            {done.map(taskRow)}
+          </Details>}
+          {!!tasks.length && <Hint>□ で完了、タスク名で編集</Hint>}
+        </Card>
       </View>
 
-      <View style={s.card}><Text style={s.section}>4. 今日の振り返り</Text>
-        <Text style={s.muted}>1日の終わりに答えてください。1日1回分を保存し、同じ日なら答え直せます。</Text>
-        {reflectionSummary && reflectionSummary.to === reflectionDay ? <View style={s.suggestion}>
-          <Text style={s.label}>直近7日間の振り返り</Text>
-          <Text style={s.muted}>{reflectionSummary.from} 〜 {reflectionSummary.to}（日本時間）</Text>
+      {/* 予定：常に読み込んだままにし、連携状態を「いま」タブでも使う */}
+      <View style={[s.stack, hidden("calendar")]}>
+        <CalendarPanel disabled={busy || !connected} run={run} reload={calendarReload}
+          changed={linked => { setCalendarLinked(linked); invalidate(); }} />
+      </View>
+
+      {/* 振り返り：今日の入力・7日間のまとめ・これまでの記録 */}
+      <View style={[s.stack, hidden("reflection")]}>
+        <Card title="今日の振り返り" right={todayReflection && <Hint>保存済み</Hint>}>
+          <Hint>1日の終わりに。同じ日なら答え直せます。</Hint>
+          <Label>タスクはできた？</Label>
+          <Row>{achievements.map(([key, text]) => <Button key={key} title={text} selected={achievement === key}
+            disabled={busy || isDemo} onPress={() => setAchievement(key)} />)}</Row>
+          <Label>AIの提案は役に立った？</Label>
+          <Stars value={satisfaction} set={setSatisfaction} disabled={busy || isDemo} />
+          <Label>今の疲れ具合は？</Label>
+          <Row>{conditions.map(([key, text]) => <Button key={key} small title={text} selected={tiredness === key}
+            disabled={busy || isDemo} onPress={() => setTiredness(key)} />)}</Row>
+          <TextInput accessibilityLabel="ひとこと" style={ui.input} value={comment} onChangeText={setComment} editable={!busy && !isDemo}
+            placeholder="ひとこと（任意）" placeholderTextColor="#64748b" maxLength={200} multiline />
+          <Button primary title={todayReflection ? "更新する" : "保存する"} disabled={busy || !connected || isDemo}
+            onPress={() => void run(saveReflection)} />
+        </Card>
+
+        {reflectionSummary && reflectionSummary.to === reflectionDay && <Card title="この7日間">
           {reflectionSummary.answered_days ? <>
-            <Text style={s.body}>回答 {reflectionSummary.answered_days}/7日 · できた {reflectionSummary.achievement.done}日 · 途中まで {reflectionSummary.achievement.partial}日 · できなかった {reflectionSummary.achievement.not_done}日</Text>
-            <Text style={s.body}>提案の満足度 平均 {reflectionSummary.average_satisfaction?.toFixed(1)}/5（{reflectionSummary.answered_days}日分）</Text>
-          </> : <Text style={s.muted}>この7日間はまだ振り返りがありません。</Text>}
-        </View> : connected && <Text style={s.muted}>サマリーを表示するには「最新の状態に更新」を押してください。</Text>}
-        <Text style={s.label}>今日のタスクはできましたか？</Text>
-        <View style={s.row}>{achievements.map(([key, text]) => <Button key={key} title={text} selected={achievement === key}
-          disabled={busy || isDemo} onPress={() => setAchievement(key)} />)}</View>
-        <Text style={s.label}>AIの提案は役に立ちましたか？（1：立たなかった〜5：とても役立った）</Text>
-        <View style={s.row}>{satisfactions.map(value => <Button key={value} title={String(value)} selected={satisfaction === value}
-          disabled={busy || isDemo} onPress={() => setSatisfaction(value)} />)}</View>
-        <Text style={s.label}>今の疲れ具合は？</Text>
-        <View style={s.row}>{conditions.map(([key, text]) => <Button key={key} title={text} selected={tiredness === key}
-          disabled={busy || isDemo} onPress={() => setTiredness(key)} />)}</View>
-        <View style={s.field}><Text style={s.label}>ひとこと（任意・200文字まで）</Text>
-          <TextInput accessibilityLabel="ひとこと" style={s.input} value={comment} onChangeText={setComment} editable={!busy && !isDemo}
-            placeholder="例：午前中は集中できた" placeholderTextColor="#64748b" maxLength={200} multiline /></View>
-        <Button title={todayReflection ? "振り返りを更新" : "振り返りを保存"} selected disabled={busy || !connected || isDemo}
-          onPress={() => void run(saveReflection)} />
-        {todayReflection && <Text style={s.muted}>今日の分は保存済みです（{new Date(todayReflection.updated_at).toLocaleString("ja-JP")}）。</Text>}
-        {reflections.filter(r => r !== todayReflection).slice(0, 7).map(r => <View key={r.day} style={s.task}>
-          <Text style={s.taskTitle}>{r.day}</Text>
-          <Text style={s.muted}>タスク {label(achievements, r.achievement)} · 提案 {r.satisfaction}/5 · 疲れ {label(conditions, r.tiredness)}</Text>
-          {!!r.comment && <Text style={s.body}>{r.comment}</Text>}
-        </View>)}
+            <View style={s.stats}>
+              <Stat value={`${reflectionSummary.answered_days}/7`} text="回答" />
+              <Stat value={String(reflectionSummary.achievement.done)} text="できた" />
+              <Stat value={String(reflectionSummary.achievement.partial)} text="途中まで" />
+              <Stat value={String(reflectionSummary.achievement.not_done)} text="できなかった" />
+              <Stat value={`★${reflectionSummary.average_satisfaction?.toFixed(1)}`} text="満足度" />
+            </View>
+          </> : <Hint>まだ振り返りがありません。</Hint>}
+        </Card>}
+
+        {reflections.some(r => r !== todayReflection) && <Card title="これまでの振り返り">
+          {reflections.filter(r => r !== todayReflection).slice(0, 7).map(r => <View key={r.day} style={s.listRow}>
+            <Text style={s.taskTitle}>{shortDate(r.day)}　<Text style={ui.hint}>{label(achievements, r.achievement)} · ★{r.satisfaction} · {label(conditions, r.tiredness)}</Text></Text>
+            {!!r.comment && <Text style={s.body}>{r.comment}</Text>}
+          </View>)}
+        </Card>}
+
+        <Card title="取り組み・休息の記録">
+          {!activities.length && <Hint>提案から選ぶと、ここに記録されます。</Hint>}
+          {activities.map(activity => <View key={activity.id} style={s.listRow}>
+            <Text style={s.taskTitle}>{activity.task_title ?? "ひと休み"}</Text>
+            <Text style={ui.hint}>{new Date(activity.created_at).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })} · {label(conditions, activity.condition_level)}</Text>
+          </View>)}
+        </Card>
       </View>
     </ScrollView>
   </SafeAreaView></SafeAreaProvider>;
 }
 
+function Stat({ value, text }: { value: string; text: string }) {
+  return <View style={s.stat}><Text style={s.statValue}>{value}</Text><Text style={ui.hint}>{text}</Text></View>;
+}
+
 const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: "#f1f5f4" },
-  content: { padding: 20, gap: 18, width: "100%", maxWidth: 760, alignSelf: "center" },
-  eyebrow: { fontSize: 13, color: "#356458", fontWeight: "700", marginTop: 16 },
-  heading: { fontSize: 30, fontWeight: "700", color: "#183c32" },
-  muted: { color: "#52645e", fontSize: 13, lineHeight: 21 },
-  card: { backgroundColor: "white", padding: 20, borderRadius: 18, gap: 14 },
-  section: { fontSize: 20, fontWeight: "700", color: "#183c32" },
-  row: { flexDirection: "row", flexWrap: "wrap", gap: 10, alignItems: "center" },
-  field: { gap: 6 }, label: { fontSize: 14, fontWeight: "600", color: "#314c43" },
-  input: { borderWidth: 1, borderColor: "#bdcec7", borderRadius: 9, padding: 12, fontSize: 16, color: "#183c32", backgroundColor: "#fafcfb" },
-  button: { borderWidth: 1, borderColor: "#b9cec4", borderRadius: 10, paddingHorizontal: 16, paddingVertical: 12, alignItems: "center" },
-  buttonText: { fontSize: 14, fontWeight: "600", color: "#234e3d" },
-  selected: { backgroundColor: "#24654c", borderColor: "#24654c" }, selectedText: { color: "white" }, disabled: { opacity: 0.45 },
-  error: { padding: 14, backgroundColor: "#fff0ed", color: "#9a2920", borderRadius: 10 },
-  notice: { padding: 14, backgroundColor: "#deeee4", color: "#234e3d", borderRadius: 10 },
-  task: { gap: 8, paddingVertical: 14, borderTopWidth: 1, borderColor: "#e5ece8" },
-  taskTitle: { fontSize: 17, color: "#243e33", fontWeight: "600" }, done: { textDecorationLine: "line-through", color: "#738179" },
-  body: { fontSize: 15, lineHeight: 24, color: "#344d43" },
-  stack: { gap: 14 }, suggestion: { padding: 16, backgroundColor: "#eef6f1", borderRadius: 12, gap: 12 },
+  root: { flex: 1, backgroundColor: colors.background },
+  top: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 8, gap: 8, width: "100%", maxWidth: 760, alignSelf: "center" },
+  header: { flexDirection: "row", alignItems: "center", gap: 8 },
+  appName: { fontSize: 18, fontWeight: "700", color: colors.ink },
+  user: { flex: 1, textAlign: "right", color: colors.muted, fontSize: 13 },
+  content: { padding: 16, paddingTop: 4, paddingBottom: 40, width: "100%", maxWidth: 760, alignSelf: "center" },
+  stack: { gap: 14 }, hidden: { display: "none" },
+  error: { padding: 12, backgroundColor: "#fff0ed", color: "#9a2920", borderRadius: 10 },
+  notice: { padding: 12, backgroundColor: "#deeee4", color: "#234e3d", borderRadius: 10 },
+  taskRow: { flexDirection: "row", alignItems: "center", gap: 6, borderTopWidth: 1, borderColor: colors.line, paddingVertical: 4 },
+  checkArea: { width: 44, height: 44, justifyContent: "center", alignItems: "center" },
+  check: { width: 26, height: 26, borderRadius: 7, borderWidth: 2, borderColor: colors.primary, justifyContent: "center", alignItems: "center" },
+  checkOn: { backgroundColor: colors.primary }, checkMark: { color: "white", fontWeight: "700", fontSize: 16 },
+  taskBody: { flex: 1, minHeight: 44, justifyContent: "center", gap: 2, paddingVertical: 6 },
+  taskTitle: { fontSize: 16, color: "#243e33", fontWeight: "600" }, done: { textDecorationLine: "line-through", color: "#738179" },
+  metaRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6 },
+  badge: { fontSize: 11, fontWeight: "700", color: colors.primary, backgroundColor: colors.soft, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, overflow: "hidden" },
+  minutesInput: { width: 90 },
+  body: { fontSize: 15, lineHeight: 23, color: colors.text },
+  suggestion: { padding: 14, backgroundColor: colors.soft, borderRadius: 12, gap: 10 },
+  rest: { backgroundColor: "#f4f1ea" },
+  listRow: { gap: 4, paddingVertical: 10, borderTopWidth: 1, borderColor: colors.line },
+  stats: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  stat: { flexGrow: 1, minWidth: 80, padding: 10, borderRadius: 10, backgroundColor: colors.soft, alignItems: "center", gap: 2 },
+  statValue: { fontSize: 20, fontWeight: "700", color: colors.ink },
 });

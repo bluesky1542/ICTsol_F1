@@ -154,8 +154,8 @@ GEMINI_API_KEY=自分のAPIキー
 GEMINI_MODEL=gemini-2.5-flash-lite
 ```
 
-3. バックエンドを再起動し、画面の「最新の状態に更新」を押す。
-4. タスクと今の調子を登録し、空き時間・場所を入力して「AIの提案を取得」を押す。
+3. バックエンドを再起動し、画面右上の「↻」を押す。
+4. 「タスク」タブでタスクを登録し、「いま」タブで今の調子・使える時間・場所を選んで「提案してもらう」を押す。
 
 2026-10-26確認時点で`gemini-2.5-flash-lite`の標準テキスト入出力には無料枠があります。対象モデル・利用上限は変更されるため、[公式料金表](https://ai.google.dev/gemini-api/docs/pricing)と[AI Studioの利用上限](https://aistudio.google.com/usage?tab=rate-limit)を確認してください。アプリからはFree Tierか有料プロジェクトかを判定できません。
 

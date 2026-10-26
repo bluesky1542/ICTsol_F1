@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { Button, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import Dashboard from "./Dashboard";
 import { api, onExpired, setSession } from "./api";
 import { isDemo } from "./demo";
+import { Button, Hint, Label } from "./ui";
 
 export default function Login() {
   const [user, setUser] = useState<{ id: number; username: string } | null>(null);
@@ -39,16 +40,15 @@ export default function Login() {
   if (user) return <Dashboard key={user.id} username={user.username} logout={logout} />;
   return <SafeAreaProvider><SafeAreaView style={s.root}><ScrollView contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
     <View style={s.card}><Text style={s.heading}>{register ? "アカウント作成" : "おかえりなさい"}</Text>
-      <Text>自分のタスクと予定を管理しましょう。</Text>
-      <Text>ユーザー名（英数字・_・-、3〜40文字）</Text>
+      <Label>ユーザー名</Label>
       <TextInput accessibilityLabel="ユーザー名" value={username} onChangeText={setUsername} autoCapitalize="none" autoCorrect={false} editable={!busy} maxLength={40} style={s.input} />
-      <Text>パスワード（8〜128文字）</Text>
+      <Label>パスワード</Label>
       <TextInput accessibilityLabel="パスワード" value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" editable={!busy} maxLength={128} style={s.input} />
-      {register && <><Text>パスワード（確認）</Text><TextInput accessibilityLabel="パスワード（確認）" value={confirm} onChangeText={setConfirm} secureTextEntry editable={!busy} maxLength={128} style={s.input} /></>}
+      {register && <><Label>パスワード（確認）</Label><TextInput accessibilityLabel="パスワード（確認）" value={confirm} onChangeText={setConfirm} secureTextEntry editable={!busy} maxLength={128} style={s.input} /></>}
       {!!error && <Text accessibilityRole="alert" style={s.error}>{error}</Text>}
-      <Button title={busy ? "処理中…" : register ? "登録して始める" : "ログイン"} disabled={busy} onPress={() => void submit()} />
+      <Button primary title={busy ? "処理中…" : register ? "登録して始める" : "ログイン"} disabled={busy} onPress={() => void submit()} />
       <Button title={register ? "ログインに戻る" : "新しいアカウントを作る"} disabled={busy} onPress={() => { setRegister(!register); setError(""); setPassword(""); setConfirm(""); }} />
-      <Text>画面更新・アプリ終了後は再ログインが必要です。開発中のHTTP接続ではテスト用パスワードを使用してください。</Text>
+      {register && <Hint>ユーザー名は英数字・_・-の3〜40文字、パスワードは8文字以上</Hint>}
     </View>
   </ScrollView></SafeAreaView></SafeAreaProvider>;
 }

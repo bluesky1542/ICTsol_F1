@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
-import { Button, Platform, StyleSheet, Text, TextInput, View } from "react-native";
+import { Platform, StyleSheet, Text, TextInput } from "react-native";
 import { api } from "./api";
 import GoogleCalendarLink from "./GoogleCalendarLink";
 import ScheduleCalendar from "./ScheduleCalendar";
 import { parseLocalDateTime, type CalendarSnapshot } from "./calendarView";
+import { Button, Card, Details, Hint, Label, Row, s as ui } from "./ui";
 
 type Snapshot = CalendarSnapshot;
-type Props = { disabled: boolean; run: (work: () => Promise<void>) => Promise<void>; changed: (linked: boolean) => void };
-export default function CalendarPanel({ disabled, run, changed }: Props) {
+type Props = { disabled: boolean; run: (work: () => Promise<void>) => Promise<void>; changed: (linked: boolean) => void; reload: number };
+export default function CalendarPanel({ disabled, run, changed, reload }: Props) {
   const [snapshot, setSnapshot] = useState<Snapshot>({ sync: null, events: [] });
   const [calendars, setCalendars] = useState<{ id: string; title: string }[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
@@ -18,9 +19,9 @@ export default function CalendarPanel({ disabled, run, changed }: Props) {
   function update(value: Snapshot) { setSnapshot(value); changed(!!value.sync); }
   useEffect(() => {
     let active = true;
-    api<Snapshot>("/calendar").then(value => { if (active) update(value); }).catch(() => { if (active) setLoadError("予定を取得できませんでした。再読み込みしてください。"); });
+    api<Snapshot>("/calendar").then(value => { if (active) { update(value); setLoadError(""); } }).catch(() => { if (active) setLoadError("予定を取得できませんでした。↻で再読み込みしてください。"); });
     return () => { active = false; };
-  }, []);
+  }, [reload]);
   async function discover() {
     const Calendar = await import("expo-calendar");
     let permission;
@@ -56,38 +57,46 @@ export default function CalendarPanel({ disabled, run, changed }: Props) {
     if (ends <= begins) throw new Error("終了は開始より後の日時にしてください。");
     if (ends <= from || begins >= until) throw new Error("追加できるのは、今から7日以内にかかる予定です。");
     update(await api<Snapshot>("/calendar/manual", "POST", { starts_at: begins.toISOString(), ends_at: ends.toISOString() })); setStart(""); setEnd("");
-    setManualMessage({ error: false, text: `予定を追加しました（${begins.toLocaleString("ja-JP")}〜）。上のカレンダーに表示されます。` });
+    setManualMessage({ error: false, text: `予定を追加しました（${begins.toLocaleString("ja-JP")}〜）。` });
   }
-  return <View style={s.card}><Text style={s.heading}>カレンダー・予定</Text>
+  return <Card title="予定" right={snapshot.sync ? <Hint>{snapshot.events.length}件</Hint> : undefined}>
     <ScheduleCalendar snapshot={snapshot} />
-    <GoogleCalendarLink />
-    {!!loadError && <Text accessibilityRole="alert">{loadError}</Text>}
-    <Button title="保存済み予定を再読み込み" disabled={disabled} onPress={() => void run(async () => { update(await api<Snapshot>("/calendar")); setLoadError(""); })} />
-    <Text>選択した予定の開始・終了時刻のみサーバーへ送信します。タイトル・説明・参加者は送信しません。取り込みはボタン操作時のみです。</Text>
-    {Platform.OS !== "web" ? <Button title="端末のカレンダーを選ぶ" disabled={disabled} onPress={() => void run(discover)} /> : <Text>Webでは端末カレンダーを読めないため、下で予定を手入力できます。</Text>}
-    {calendars.map(c => <Button key={c.id} title={`${selected.includes(c.id) ? "✓ " : ""}${c.title}`} disabled={disabled} onPress={() => setSelected(v => v.includes(c.id) ? v.filter(id => id !== c.id) : [...v, c.id])} />)}
-    {!!calendars.length && <><Text>取り込むと、このアカウントの保存済み予定（手入力も含む）を選択カレンダーの今後7日分で置き換えます。終日の予定は終日を予定ありとして扱います。</Text>
-      <Button title="選択した予定を取り込む" disabled={disabled || !selected.length} onPress={() => void run(sync)} /></>}
-    <Text>手入力（端末の現地時刻）</Text>
-    <Text style={s.hint}>例：2026-10-20 14:00（「/」区切りや全角数字でも入力できます。今から7日以内の予定が対象です）</Text>
-    <TextInput accessibilityLabel="予定の開始日時" placeholder="開始 例：2026-10-20 14:00" value={start} onChangeText={setStart} editable={!disabled} style={s.input} />
-    <TextInput accessibilityLabel="予定の終了日時" placeholder="終了 例：2026-10-20 15:00" value={end} onChangeText={setEnd} editable={!disabled} style={s.input} />
+    {!!loadError && <Text accessibilityRole="alert" style={s.error}>{loadError}</Text>}
+
+    <Label>予定を追加</Label>
+    <TextInput accessibilityLabel="予定の開始日時" placeholder="開始　2026-10-20 14:00" placeholderTextColor="#64748b" value={start} onChangeText={setStart} editable={!disabled} style={ui.input} />
+    <TextInput accessibilityLabel="予定の終了日時" placeholder="終了　2026-10-20 15:00" placeholderTextColor="#64748b" value={end} onChangeText={setEnd} editable={!disabled} style={ui.input} />
+    <Hint>今から7日以内の予定（端末の時刻）</Hint>
     {/* 入力欄のそばに結果を出し、画面上部のエラーに気づかず失敗する状態を防ぐ。 */}
-    <Button title="予定時間を追加" disabled={disabled} onPress={() => void run(async () => {
+    <Button primary title="追加" disabled={disabled} onPress={() => void run(async () => {
       setManualMessage(null);
       try { await manual(); }
       catch (e) { setManualMessage({ error: true, text: e instanceof Error ? e.message : "予定を追加できませんでした。" }); }
     })} />
     {manualMessage && <Text accessibilityRole={manualMessage.error ? "alert" : undefined} accessibilityLiveRegion="polite"
       style={manualMessage.error ? s.error : s.success}>{manualMessage.text}</Text>}
-    <Text>{snapshot.sync ? `更新：${new Date(snapshot.sync.synced_at).toLocaleString("ja-JP")} · ${snapshot.events.length}件` : "予定は未連携です。"}</Text>
-    {snapshot.sync?.source === "manual" && <Text>手入力の予定は翌日以降も使えます。24時間ごとの再取り込みは不要です。</Text>}
-    {!!snapshot.sync && <Button title="連携解除（サーバーの予定時間を削除）" disabled={disabled} onPress={() => void run(async () => {
+
+    {Platform.OS !== "web" && <>
+      <Label>端末のカレンダーから取り込む</Label>
+      <Button title="カレンダーを選ぶ" disabled={disabled} onPress={() => void run(discover)} />
+      {!!calendars.length && <Row>{calendars.map(c => <Button key={c.id} small title={`${selected.includes(c.id) ? "✓ " : ""}${c.title}`} selected={selected.includes(c.id)}
+        disabled={disabled} onPress={() => setSelected(v => v.includes(c.id) ? v.filter(id => id !== c.id) : [...v, c.id])} />)}</Row>}
+      {!!calendars.length && <>
+        <Hint warn>取り込むと、保存済みの予定（手入力も含む）が今後7日分で置き換わります。</Hint>
+        <Button primary title="取り込む" disabled={disabled || !selected.length} onPress={() => void run(sync)} /></>}
+    </>}
+
+    <GoogleCalendarLink />
+    <Details>
+      <Hint>サーバーに保存するのは予定の開始・終了時刻だけです。タイトル・説明・参加者は送信しません。そのため予定は「予定あり」と表示します。</Hint>
+      <Hint>端末からの取り込みはボタンを押したときだけ行います。予定が変わったときや24時間経ったら取り込み直してください。終日の予定は一日中「予定あり」として扱います。手入力の予定は取り込み直す必要はありません。</Hint>
+      {snapshot.sync && <Hint>最終更新：{new Date(snapshot.sync.synced_at).toLocaleString("ja-JP")}</Hint>}
+    </Details>
+    {!!snapshot.sync && <Button small title="保存した予定をすべて削除" disabled={disabled} onPress={() => void run(async () => {
       await api("/calendar", "DELETE"); update({ sync: null, events: [] }); setSelected([]); setCalendars([]);
     })} />}
-  </View>;
+  </Card>;
 }
-const s = StyleSheet.create({ card: { backgroundColor: "white", padding: 20, borderRadius: 18, gap: 14 }, heading: { fontSize: 20, fontWeight: "700", color: "#183c32" }, input: { borderWidth: 1, borderColor: "#bdcec7", borderRadius: 8, padding: 12, fontSize: 16 },
-  hint: { color: "#52645e", fontSize: 13, lineHeight: 20 },
+const s = StyleSheet.create({
   error: { padding: 12, backgroundColor: "#fff0ed", color: "#9a2920", borderRadius: 10 },
   success: { padding: 12, backgroundColor: "#deeee4", color: "#234e3d", borderRadius: 10 } });
