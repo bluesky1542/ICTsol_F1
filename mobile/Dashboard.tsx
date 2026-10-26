@@ -225,11 +225,6 @@ export default function Dashboard({ username, logout }: { username: string; logo
     const meta = [`${task.minutes}分`, task.place].filter(Boolean).join(" · ");
     const due = task.deadline && !task.completed ? deadlineLabel(task.deadline, reflectionDay) : null;
     return <View key={task.id} style={s.taskRow}>
-      <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: task.completed, disabled: busy }}
-        accessibilityLabel={`${task.title}を${task.completed ? "未完了に戻す" : "完了にする"}`} disabled={busy}
-        onPress={() => void run(() => toggleTask(task))} style={s.checkArea}>
-        <View style={[s.check, task.completed && s.checkOn]}>{task.completed && <Text style={s.checkMark}>✓</Text>}</View>
-      </Pressable>
       <Pressable accessibilityRole="button" accessibilityLabel={`${task.title}を編集`} disabled={busy}
         onPress={() => startEdit(task)} style={s.taskBody}>
         <Text style={[s.taskTitle, task.completed && s.done]}>{task.title}</Text>
@@ -241,6 +236,10 @@ export default function Dashboard({ username, logout }: { username: string; logo
           {task.concentration === "high" && <Text style={s.badge}>集中</Text>}
         </View>
       </Pressable>
+      {/* 完了は言葉のボタンで明示する。完了済みは「戻す」で未完了に戻せる */}
+      <Button small title={task.completed ? "戻す" : "✓ 完了"}
+        label={`${task.title}を${task.completed ? "未完了に戻す" : "完了にする"}`} disabled={busy}
+        onPress={() => void run(() => toggleTask(task))} />
     </View>;
   }
 
@@ -378,7 +377,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
           {!!done.length && <Details title={`完了済み（${done.length}件）`}>
             {done.map(taskRow)}
           </Details>}
-          {!!tasks.length && <Hint>□ で完了、タスク名で編集</Hint>}
+          {!!tasks.length && <Hint>タスク名を押すと編集できます</Hint>}
         </Card>
         </View>
 
@@ -438,9 +437,6 @@ const s = StyleSheet.create({
   error: { padding: 12, backgroundColor: "#fff0ed", color: "#9a2920", borderRadius: 10 },
   notice: { padding: 12, backgroundColor: "#deeee4", color: "#234e3d", borderRadius: 10 },
   taskRow: { flexDirection: "row", alignItems: "center", gap: 6, borderTopWidth: 1, borderColor: colors.line, paddingVertical: 4 },
-  checkArea: { width: 44, height: 44, justifyContent: "center", alignItems: "center" },
-  check: { width: 26, height: 26, borderRadius: 7, borderWidth: 2, borderColor: colors.primary, justifyContent: "center", alignItems: "center" },
-  checkOn: { backgroundColor: colors.primary }, checkMark: { color: "white", fontWeight: "700", fontSize: 16 },
   taskBody: { flex: 1, minHeight: 44, justifyContent: "center", gap: 2, paddingVertical: 6 },
   taskTitle: { fontSize: 16, color: "#243e33", fontWeight: "600" }, done: { textDecorationLine: "line-through", color: "#738179" },
   metaRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6 },
