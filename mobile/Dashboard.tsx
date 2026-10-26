@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Animated, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { Achievement, Activity, api, Condition, ConditionLevel, Level, Reflection, ReflectionSummary, Suggestions, Task, WorkPlan } from "./api";
@@ -72,6 +72,11 @@ export default function Dashboard({ username, logout }: { username: string; logo
   const [customEnd, setCustomEnd] = useState(false);
   const [endDraft, setEndDraft] = useState("");
   const [reflectionOpen, setReflectionOpen] = useState(false);
+  // 「あとで」を押したら、この時刻まで横からのパネルを出さない。
+  const [snoozeUntil, setSnoozeUntil] = useState(0);
+  const slide = useRef(new Animated.Value(0)).current;
+  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
+  const panelWidth = Math.min(400, screenWidth - 24);
   const [now, setNow] = useState(Date.now());
   const reflectionDay = japanToday(now);
   const todayReflection = reflections.find(r => r.day === reflectionDay);
@@ -79,7 +84,12 @@ export default function Dashboard({ username, logout }: { username: string; logo
   // 終了予定は日本時間の今日の時刻として扱う。
   const dueAt = workEnd ? Date.parse(`${reflectionDay}T${workEnd}:00+09:00`) - REFLECTION_LEAD : null;
   const reflectionDue = dueAt !== null && now >= dueAt && !todayReflection;
-  const showReflection = reflectionDue || reflectionOpen;
+  const showReflection = (reflectionDue && now >= snoozeUntil) || reflectionOpen;
+  // 画面の右端から振り返りパネルをすべり込ませる。
+  useEffect(() => {
+    Animated.timing(slide, { toValue: showReflection ? 1 : 0, duration: 280, useNativeDriver: Platform.OS !== "web" }).start();
+  }, [showReflection]);
+  function laterReflection() { setReflectionOpen(false); if (reflectionDue) setSnoozeUntil(Date.now() + 15 * 60000); }
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30000);
     return () => clearInterval(timer);
@@ -181,7 +191,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
       const saved = await api<WorkPlan>("/reflections/plan", "PUT", { end_time: end });
       setWorkEnd(saved.end_time); setCustomEnd(false); setEndDraft(""); setNow(Date.now());
       const due = Date.parse(`${saved.day}T${saved.end_time}:00+09:00`) - REFLECTION_LEAD;
-      setNotice(due <= Date.now() ? "終了予定が近いので、振り返りを上に出しました。" : `${clock(due)}ごろに振り返りをお知らせします。`);
+      setNotice(due <= Date.now() ? "終了予定が近いので、振り返りを出しました。" : `${clock(due)}ごろに振り返りをお知らせします。`);
     });
   }
 
@@ -220,7 +230,6 @@ export default function Dashboard({ username, logout }: { username: string; logo
       <Tabs tabs={[["now", "いま"], ["tasks", `タスク${open.length ? ` ${open.length}` : ""}`], ["calendar", "予定"]]}
         value={tab} set={changeTab} />
       {isDemo && <Hint>デモ画面です（保存・AIは動きません）</Hint>}
-      {reflectionDue && tab !== "now" && <Button primary title="🌙 今日の振り返りに答える" onPress={() => changeTab("now")} />}
       {!!error && <Text accessibilityRole="alert" style={s.error}>{error}</Text>}
       {!!notice && <Text accessibilityLiveRegion="polite" style={s.notice}>{notice}</Text>}
     </View>
@@ -228,22 +237,6 @@ export default function Dashboard({ username, logout }: { username: string; logo
 
       {/* いま：調子 → 時間 → 場所 → 提案 の順に上から操作する */}
       <View style={[s.stack, hidden("now")]}>
-        {showReflection && <Card title="🌙 今日の振り返り" right={!reflectionDue && <Button small title="閉じる" onPress={() => setReflectionOpen(false)} />}>
-          <Hint>おつかれさまでした。3つ答えたら1日の締めくくりです。</Hint>
-          <Label>タスクはできた？</Label>
-          <Row>{achievements.map(([key, text]) => <Button key={key} title={text} selected={achievement === key}
-            disabled={busy || isDemo} onPress={() => setAchievement(key)} />)}</Row>
-          <Label>AIの提案は役に立った？</Label>
-          <Stars value={satisfaction} set={setSatisfaction} disabled={busy || isDemo} />
-          <Label>今の疲れ具合は？</Label>
-          <Row>{conditions.map(([key, text]) => <Button key={key} small title={text} selected={tiredness === key}
-            disabled={busy || isDemo} onPress={() => setTiredness(key)} />)}</Row>
-          <TextInput accessibilityLabel="ひとこと" style={ui.input} value={comment} onChangeText={setComment} editable={!busy && !isDemo}
-            placeholder="ひとこと（任意）" placeholderTextColor="#64748b" maxLength={200} multiline />
-          <Button primary title={todayReflection ? "更新する" : "保存する"} disabled={busy || !connected || isDemo}
-            onPress={() => void run(saveReflection)} />
-        </Card>}
-
         <Card title="今の調子は？">
           <Row>{conditions.map(([key, text]) => <Button key={key} title={text} disabled={busy || !connected}
             selected={conditionFresh && condition?.level === key} onPress={() => void run(async () => {
@@ -316,7 +309,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
         {/* 記録：今日の振り返りの入口と、これまでの記録（普段は閉じておく） */}
         <Card title="きょうの記録" right={todayReflection ? <Hint>振り返り済み ✓</Hint> : workEnd ? <Hint>{workEnd}まで</Hint> : undefined}>
           {!showReflection && <Row><Button small title={todayReflection ? "振り返りを答え直す" : "今すぐ振り返る"} disabled={busy || isDemo}
-            onPress={() => { setReflectionOpen(true); scroll.current?.scrollTo({ y: 0, animated: true }); }} /></Row>}
+            onPress={() => setReflectionOpen(true)} /></Row>}
           <Details title="これまでの記録">
             {reflectionSummary && reflectionSummary.to === reflectionDay && !!reflectionSummary.answered_days && <>
               <Label>この7日間</Label>
@@ -382,6 +375,31 @@ export default function Dashboard({ username, logout }: { username: string; logo
       </View>
 
     </ScrollView>
+    {/* 振り返り：終了予定の30分前になると画面の横から出てくる */}
+    <Animated.View pointerEvents={showReflection ? "auto" : "none"} accessibilityViewIsModal={showReflection}
+      style={[s.panel, { width: panelWidth, maxHeight: screenHeight - 24, opacity: slide,
+        transform: [{ translateX: slide.interpolate({ inputRange: [0, 1], outputRange: [panelWidth + 24, 0] }) }] }]}>
+      <ScrollView contentContainerStyle={s.panelContent} keyboardShouldPersistTaps="handled">
+        <View style={ui.cardHeading}>
+          <Text style={ui.section}>🌙 今日の振り返り</Text>
+          <Button small title="あとで" disabled={busy} onPress={laterReflection} />
+        </View>
+        <Hint>おつかれさまでした。3つ答えたら1日の締めくくりです。</Hint>
+        <Label>タスクはできた？</Label>
+        <Row>{achievements.map(([key, text]) => <Button key={key} title={text} selected={achievement === key}
+          disabled={busy || isDemo} onPress={() => setAchievement(key)} />)}</Row>
+        <Label>AIの提案は役に立った？</Label>
+        <Stars value={satisfaction} set={setSatisfaction} disabled={busy || isDemo} />
+        <Label>今の疲れ具合は？</Label>
+        <Row>{conditions.map(([key, text]) => <Button key={key} small title={text} selected={tiredness === key}
+          disabled={busy || isDemo} onPress={() => setTiredness(key)} />)}</Row>
+        <TextInput accessibilityLabel="ひとこと" style={ui.input} value={comment} onChangeText={setComment} editable={!busy && !isDemo}
+          placeholder="ひとこと（任意）" placeholderTextColor="#64748b" maxLength={200} multiline />
+        <Button primary title={todayReflection ? "更新する" : "保存する"} disabled={busy || !connected || isDemo}
+          onPress={() => void run(saveReflection)} />
+        {!!error && <Text accessibilityRole="alert" style={s.error}>{error}</Text>}
+      </ScrollView>
+    </Animated.View>
   </SafeAreaView></SafeAreaProvider>;
 }
 
@@ -390,7 +408,10 @@ function Stat({ value, text }: { value: string; text: string }) {
 }
 
 const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.background },
+  root: { flex: 1, backgroundColor: colors.background, overflow: "hidden" },
+  panel: { position: "absolute", top: 12, right: 12, backgroundColor: "white", borderRadius: 18,
+    borderWidth: 1, borderColor: colors.border, shadowColor: "#000", shadowOpacity: 0.18, shadowRadius: 18, shadowOffset: { width: 0, height: 6 }, elevation: 8 },
+  panelContent: { padding: 18, gap: 12 },
   top: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 8, gap: 8, width: "100%", maxWidth: 760, alignSelf: "center" },
   header: { flexDirection: "row", alignItems: "center", gap: 8 },
   appName: { fontSize: 18, fontWeight: "700", color: colors.ink },
