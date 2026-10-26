@@ -128,6 +128,7 @@ def save_condition(condition: Condition, user: User):
     updated_at = datetime.now(timezone.utc).isoformat()
     with storage.database() as db:
         db.execute("INSERT INTO user_conditions VALUES (?,?,?) ON CONFLICT(user_id) DO UPDATE SET level=excluded.level, updated_at=excluded.updated_at", (user["id"], condition.level, updated_at))
+        db.execute("INSERT INTO condition_logs (user_id,level,created_at) VALUES (?,?,?)", (user["id"], condition.level, updated_at))
     return get_condition(user)
 
 

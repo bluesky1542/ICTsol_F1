@@ -183,7 +183,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
           onPress={() => { setUseCalendar(!useCalendar); invalidate(); }} /><Text style={s.muted}>保存済み予定から次の予定までの時間を計算します。端末から取り込んだ予定は変更後や24時間経過後に再取り込みしてください。手入力の予定にこの制限はありません。</Text></>}
         <Input label="いま使える時間（分）" value={available} set={v => { setAvailable(v); invalidate(); }} numeric disabled={busy} />
         <Input label="いまいる場所" value={currentPlace} set={v => { setCurrentPlace(v); invalidate(); }} placeholder="例：自宅（タスクの場所と一致）" disabled={busy} />
-        <Text style={s.muted}>候補タスクの内容・入力した調子・空き時間・場所をGoogle（Gemini）へ送信します。</Text>
+        <Text style={s.muted}>候補タスクの内容・入力した調子・空き時間・場所、過去7回分の朝の調子と振り返り（コメントを含む）をGoogle（Gemini）へ送信します。</Text>
         <Text style={s.muted}>無料枠には利用上限があります。課金を有効にすると料金が発生する場合があります。無料枠では送信内容がGoogleの製品改善に利用される場合があるため、個人情報・機密情報を入力しないでください。</Text>
         {!aiConfigured && <Text style={s.muted}>AI提案は準備中です。タスクや予定の保存は利用できます。</Text>}
         <Button title={busy ? "処理中…" : "AIの提案を取得"} selected disabled={busy || !connected || !conditionFresh || !aiConfigured}

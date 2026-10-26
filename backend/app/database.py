@@ -111,6 +111,11 @@ def initialize():
             CREATE TABLE IF NOT EXISTS user_conditions (
                 user_id INTEGER PRIMARY KEY, level TEXT NOT NULL, updated_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS condition_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL, level TEXT NOT NULL, created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS condition_logs_owner_time ON condition_logs(user_id, created_at);
             CREATE TABLE IF NOT EXISTS calendar_events (
                 user_id INTEGER NOT NULL, event_key TEXT NOT NULL,
                 starts_at TEXT NOT NULL, ends_at TEXT NOT NULL,
