@@ -8,7 +8,7 @@ import { isDemo } from "./demo";
 import { askNotificationPermission, scheduleNotification } from "./notify";
 import { Button, Card, colors, Details, Hint, Input, Label, Row, Stars, Tabs, s as ui } from "./ui";
 
-type Tab = "now" | "tasks" | "calendar";
+type Tab = "now" | "calendar";
 const levels: [Level, string][] = [["low", "低"], ["medium", "中"], ["high", "高"]];
 const conditions: [ConditionLevel, string][] = [
   ["slightly_tired", "少し疲れてる"],
@@ -44,6 +44,8 @@ export default function Dashboard({ username, logout }: { username: string; logo
   const [busy, setBusy] = useState(false);
   const lock = useRef(false);
   const scroll = useRef<ScrollView>(null);
+  // 編集時にフォームまでスクロールするため、やることカードの位置を覚えておく。
+  const taskCardY = useRef(0);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [title, setTitle] = useState("");
@@ -134,7 +136,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
   function startEdit(task: Task) {
     setEditing(task.id); setTitle(task.title); setMinutes(String(task.minutes)); setDeadline(task.deadline || "");
     setPriority(task.priority); setConcentration(task.concentration); setPlace(task.place); setShowDetails(true);
-    scroll.current?.scrollTo({ y: 0, animated: true });
+    scroll.current?.scrollTo({ y: taskCardY.current, animated: true });
   }
   function integer(value: string) {
     if (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 1440) throw new Error("時間は1〜1440分の整数で入力してください。");
@@ -227,7 +229,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
           onPress={() => void run(async () => { await refresh(); setCalendarReload(n => n + 1); })} />
         <Button small title="ログアウト" disabled={busy} onPress={() => void run(logout)} />
       </View>
-      <Tabs tabs={[["now", "いま"], ["tasks", `タスク${open.length ? ` ${open.length}` : ""}`], ["calendar", "予定"]]}
+      <Tabs tabs={[["now", "いま"], ["calendar", "予定"]]}
         value={tab} set={changeTab} />
       {isDemo && <Hint>デモ画面です（保存・AIは動きません）</Hint>}
       {!!error && <Text accessibilityRole="alert" style={s.error}>{error}</Text>}
@@ -235,7 +237,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
     </View>
     <ScrollView ref={scroll} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
 
-      {/* いま：調子 → 時間 → 場所 → 提案 の順に上から操作する */}
+      {/* いま：調子 → 提案 → やること → 記録 の順に上から操作する */}
       <View style={[s.stack, hidden("now")]}>
         <Card title="今の調子は？">
           <Row>{conditions.map(([key, text]) => <Button key={key} title={text} disabled={busy || !connected}
@@ -306,6 +308,35 @@ export default function Dashboard({ username, logout }: { username: string; logo
           </View>
         </Card>}
 
+        {/* やること：追加・編集フォームと一覧を1枚にまとめる */}
+        <View onLayout={e => { taskCardY.current = e.nativeEvent.layout.y; }}>
+        <Card title={editing === null ? `やること ${open.length}件` : "タスクを編集"}>
+          <Input label="タスク名" hideLabel value={title} set={setTitle} placeholder="タスク名（例：レポートの下書き）" disabled={busy} />
+          <Label>かかる時間</Label>
+          <Row>
+            {minutePresets.map(value => <Button key={value} small title={`${value}分`} selected={minutes === value} disabled={busy} onPress={() => setMinutes(value)} />)}
+            <View style={s.minutesInput}><Input label="かかる時間（分）" hideLabel value={minutes} set={setMinutes} numeric placeholder="分" disabled={busy} /></View>
+            <Text style={ui.hint}>分</Text>
+          </Row>
+          <Details title="詳細（締切・優先度・集中度・場所）" open={showDetails} onToggle={setShowDetails}>
+            <Input label="締切" value={deadline} set={setDeadline} placeholder="2026-10-15" disabled={busy} />
+            <Label>優先度</Label><Row>{levels.map(([key, text]) => <Button key={key} small title={text}
+              selected={priority === key} disabled={busy} onPress={() => setPriority(key)} />)}</Row>
+            <Label>必要な集中度</Label><Row>{levels.map(([key, text]) => <Button key={key} small title={text}
+              selected={concentration === key} disabled={busy} onPress={() => setConcentration(key)} />)}</Row>
+            <Input label="場所（空欄ならどこでも）" value={place} set={setPlace} placeholder="例：自宅" disabled={busy} />
+          </Details>
+          <Row><Button primary title={editing === null ? "追加" : "保存"} disabled={busy || !connected} onPress={() => void run(saveTask)} />
+            {editing !== null && <Button title="やめる" disabled={busy} onPress={resetForm} />}</Row>
+          {!tasks.length && <Hint>まだタスクがありません。上の欄から追加しましょう。</Hint>}
+          {open.map(taskRow)}
+          {!!done.length && <Details title={`完了済み（${done.length}件）`}>
+            {done.map(taskRow)}
+          </Details>}
+          {!!tasks.length && <Hint>□ で完了、タスク名で編集</Hint>}
+        </Card>
+        </View>
+
         {/* 記録：今日の振り返りの入口と、これまでの記録（普段は閉じておく） */}
         <Card title="きょうの記録" right={todayReflection ? <Hint>振り返り済み ✓</Hint> : workEnd ? <Hint>{workEnd}まで</Hint> : undefined}>
           {!showReflection && <Row><Button small title={todayReflection ? "振り返りを答え直す" : "今すぐ振り返る"} disabled={busy || isDemo}
@@ -333,38 +364,6 @@ export default function Dashboard({ username, logout }: { username: string; logo
               <Text style={ui.hint}>{new Date(activity.created_at).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })} · {label(conditions, activity.condition_level)}</Text>
             </View>)}
           </Details>
-        </Card>
-      </View>
-
-      {/* タスク：追加フォームと一覧 */}
-      <View style={[s.stack, hidden("tasks")]}>
-        <Card title={editing === null ? "タスクを追加" : "タスクを編集"}>
-          <Input label="タスク名" hideLabel value={title} set={setTitle} placeholder="タスク名（例：レポートの下書き）" disabled={busy} />
-          <Label>かかる時間</Label>
-          <Row>
-            {minutePresets.map(value => <Button key={value} small title={`${value}分`} selected={minutes === value} disabled={busy} onPress={() => setMinutes(value)} />)}
-            <View style={s.minutesInput}><Input label="かかる時間（分）" hideLabel value={minutes} set={setMinutes} numeric placeholder="分" disabled={busy} /></View>
-            <Text style={ui.hint}>分</Text>
-          </Row>
-          <Details title="詳細（締切・優先度・集中度・場所）" open={showDetails} onToggle={setShowDetails}>
-            <Input label="締切" value={deadline} set={setDeadline} placeholder="2026-10-15" disabled={busy} />
-            <Label>優先度</Label><Row>{levels.map(([key, text]) => <Button key={key} small title={text}
-              selected={priority === key} disabled={busy} onPress={() => setPriority(key)} />)}</Row>
-            <Label>必要な集中度</Label><Row>{levels.map(([key, text]) => <Button key={key} small title={text}
-              selected={concentration === key} disabled={busy} onPress={() => setConcentration(key)} />)}</Row>
-            <Input label="場所（空欄ならどこでも）" value={place} set={setPlace} placeholder="例：自宅" disabled={busy} />
-          </Details>
-          <Row><Button primary title={editing === null ? "追加" : "保存"} disabled={busy || !connected} onPress={() => void run(saveTask)} />
-            {editing !== null && <Button title="やめる" disabled={busy} onPress={resetForm} />}</Row>
-        </Card>
-
-        <Card title={`やること ${open.length}件`}>
-          {!tasks.length && <Hint>まだタスクがありません。上から追加しましょう。</Hint>}
-          {open.map(taskRow)}
-          {!!done.length && <Details title={`完了済み（${done.length}件）`}>
-            {done.map(taskRow)}
-          </Details>}
-          {!!tasks.length && <Hint>□ で完了、タスク名で編集</Hint>}
         </Card>
       </View>
 
