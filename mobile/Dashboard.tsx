@@ -6,7 +6,7 @@ import { Achievement, Activity, api, Condition, ConditionLevel, Level, Reflectio
 import CalendarPanel from "./CalendarPanel";
 import { isDemo } from "./demo";
 import { askNotificationPermission, scheduleNotification } from "./notify";
-import { Button, Card, colors, Details, Hint, Input, Label, Row, Stars, Tabs, s as ui } from "./ui";
+import { Button, Card, colors, Details, Hint, Input, Label, Row, Stars, Tabs, TimeField, s as ui } from "./ui";
 
 type Tab = "now" | "calendar";
 const levels: [Level, string][] = [["low", "低"], ["medium", "中"], ["high", "高"]];
@@ -22,7 +22,6 @@ const availablePresets = ["15", "30", "60", "90"];
 const minutePresets = ["15", "30", "60"];
 // 締切のよく使う選択肢（今日から何日後か。null は締切なし）。
 const deadlinePresets: [number | null, string][] = [[null, "なし"], [0, "今日"], [1, "明日"], [3, "3日後"], [7, "1週間後"]];
-const endPresets = ["17:00", "18:00", "19:00", "20:00", "21:00", "22:00"];
 // 「1830」「9:00」なども HH:MM にそろえる。正しくなければ null。
 function normalizeTime(text: string) {
   const match = text.trim().replace("：", ":").match(/^(\d{1,2}):?(\d{2})$/);
@@ -69,8 +68,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
   const [satisfaction, setSatisfaction] = useState<number | null>(null);
   const [tiredness, setTiredness] = useState<ConditionLevel | null>(null);
   const [comment, setComment] = useState("");
-  const [workEnd, setWorkEnd] = useState<string | null>(null);
-  const [customEnd, setCustomEnd] = useState(false);
+  const [plan, setPlan] = useState<WorkPlan | null>(null);
   const [endDraft, setEndDraft] = useState("");
   const [reflectionOpen, setReflectionOpen] = useState(false);
   // 「あとで」を押したら、この時刻まで横からのパネルを出さない。
@@ -81,14 +79,21 @@ export default function Dashboard({ username, logout }: { username: string; logo
   const [now, setNow] = useState(Date.now());
   const reflectionDay = japanToday(now);
   const todayReflection = reflections.find(r => r.day === reflectionDay);
+  // 終了予定は保存した日（日本時間）だけ有効。日付が変わったら前日の予定で振り返りを出さない。
+  const workEnd = plan?.day === reflectionDay ? plan.end_time : null;
+  // 入力欄は保存済みの終了予定で初期化する。
+  useEffect(() => { setEndDraft(workEnd ?? ""); }, [workEnd]);
   const conditionFresh = !!condition && now < Date.parse(condition.expires_at);
   // 終了予定は日本時間の今日の時刻として扱う。
   const dueAt = workEnd ? Date.parse(`${reflectionDay}T${workEnd}:00+09:00`) - REFLECTION_LEAD : null;
   const reflectionDue = dueAt !== null && now >= dueAt && !todayReflection;
   const showReflection = (reflectionDue && now >= snoozeUntil) || reflectionOpen;
   // 画面の右端から振り返りパネルをすべり込ませる。
+  const [panelMounted, setPanelMounted] = useState(false);
   useEffect(() => {
-    Animated.timing(slide, { toValue: showReflection ? 1 : 0, duration: 280, useNativeDriver: Platform.OS !== "web" }).start();
+    if (showReflection) setPanelMounted(true);
+    Animated.timing(slide, { toValue: showReflection ? 1 : 0, duration: 280, useNativeDriver: Platform.OS !== "web" })
+      .start(({ finished }) => { if (finished && !showReflection) setPanelMounted(false); });
   }, [showReflection]);
   function laterReflection() { setReflectionOpen(false); if (reflectionDue) setSnoozeUntil(Date.now() + 15 * 60000); }
   useEffect(() => {
@@ -104,7 +109,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
   useEffect(() => {
     setAchievement(todayReflection?.achievement ?? null); setSatisfaction(todayReflection?.satisfaction ?? null);
     setTiredness(todayReflection?.tiredness ?? null); setComment(todayReflection?.comment ?? "");
-  }, [reflectionDay, todayReflection]);
+  }, [reflectionDay, todayReflection?.updated_at]);
 
   async function run(work: () => Promise<void>) {
     if (lock.current) return;
@@ -116,11 +121,11 @@ export default function Dashboard({ username, logout }: { username: string; logo
   }
   function invalidate() { setSuggestions(null); setSelected(null); }
   async function refresh() {
-    const [nextTasks, nextCondition, config, nextReflections, plan] = await Promise.all([
+    const [nextTasks, nextCondition, config, nextReflections, nextPlan] = await Promise.all([
       api<Task[]>("/tasks"), api<Condition | null>("/condition"), api<{ ai_configured: boolean }>("/config"),
       api<Reflection[]>("/reflections"), api<WorkPlan | null>("/reflections/plan"),
     ]);
-    setWorkEnd(plan?.end_time ?? null);
+    setPlan(nextPlan);
     setNow(Date.now()); setReflections(nextReflections);
     setTasks(nextTasks); setCondition(nextCondition); setAIConfigured(config.ai_configured); setConnected(true); invalidate();
   }
@@ -185,9 +190,9 @@ export default function Dashboard({ username, logout }: { username: string; logo
       const end = normalizeTime(text);
       if (!end) throw new Error("終了時刻は 18:30 のように入力してください。");
       const saved = await api<WorkPlan>("/reflections/plan", "PUT", { end_time: end });
-      setWorkEnd(saved.end_time); setCustomEnd(false); setEndDraft(""); setNow(Date.now());
+      setPlan(saved); setNow(Date.now());
       const due = Date.parse(`${saved.day}T${saved.end_time}:00+09:00`) - REFLECTION_LEAD;
-      setNotice(due <= Date.now() ? "終了予定が近いので、振り返りを出しました。" : `${clock(due)}ごろに振り返りをお知らせします。`);
+      setNotice(due <= Date.now() ? "終了予定が近いので、振り返りを出しました。" : "終了予定を保存しました。");
     });
   }
 
@@ -242,15 +247,10 @@ export default function Dashboard({ username, logout }: { username: string; logo
           {condition && !conditionFresh && <Hint warn>日付が変わりました。今日の調子を選んでください。</Hint>}
           <Label>今日は何時まで作業する？</Label>
           <Row>
-            {endPresets.map(time => <Button key={time} small title={time} selected={!customEnd && workEnd === time}
-              disabled={busy || !connected || isDemo} onPress={() => saveWorkEnd(time)} />)}
-            <Button small title="その他" selected={customEnd || (!!workEnd && !endPresets.includes(workEnd))}
-              disabled={busy || !connected || isDemo} onPress={() => { setCustomEnd(true); setEndDraft(workEnd ?? ""); }} />
+            <TimeField label="作業の終了時刻" value={endDraft} set={setEndDraft} disabled={busy || !connected || isDemo} />
+            <Button small primary title={workEnd ? "変更" : "決定"} disabled={busy || !connected || isDemo || !endDraft || endDraft === workEnd}
+              onPress={() => saveWorkEnd(endDraft)} />
           </Row>
-          {customEnd && <Row>
-            <View style={s.minutesInput}><Input label="終了時刻" hideLabel value={endDraft} set={setEndDraft} placeholder="18:30" maxLength={5} disabled={busy} /></View>
-            <Button small primary title="決定" disabled={busy} onPress={() => saveWorkEnd(endDraft)} />
-          </Row>}
           {dueAt !== null && !todayReflection && !reflectionDue && <Hint>🔔 {clock(dueAt)}ごろに振り返りをお知らせします</Hint>}
         </Card>
 
@@ -351,13 +351,13 @@ export default function Dashboard({ username, logout }: { username: string; logo
 
     </ScrollView>
     {/* 振り返り：終了予定の30分前になると画面の横から出てくる */}
-    <Animated.View pointerEvents={showReflection ? "auto" : "none"} accessibilityViewIsModal={showReflection}
+    {panelMounted && <Animated.View pointerEvents={showReflection ? "auto" : "none"} accessibilityViewIsModal={showReflection}
       style={[s.panel, { width: panelWidth, maxHeight: screenHeight - 24, opacity: slide,
         transform: [{ translateX: slide.interpolate({ inputRange: [0, 1], outputRange: [panelWidth + 24, 0] }) }] }]}>
       <ScrollView contentContainerStyle={s.panelContent} keyboardShouldPersistTaps="handled">
         <View style={ui.cardHeading}>
           <Text style={ui.section}>🌙 今日の振り返り</Text>
-          <Button small title="あとで" disabled={busy} onPress={laterReflection} />
+          <Button small title={reflectionDue ? "あとで" : "閉じる"} disabled={busy} onPress={laterReflection} />
         </View>
         <Hint>おつかれさまでした。3つ答えたら1日の締めくくりです。</Hint>
         <Label>タスクはできた？</Label>
@@ -374,7 +374,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
           onPress={() => void run(saveReflection)} />
         {!!error && <Text accessibilityRole="alert" style={s.error}>{error}</Text>}
       </ScrollView>
-    </Animated.View>
+    </Animated.View>}
   </SafeAreaView></SafeAreaProvider>;
 }
 

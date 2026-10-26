@@ -1,5 +1,5 @@
-import { ReactNode, useState } from "react";
-import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { createElement, ReactNode, useState } from "react";
+import { Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 // 画面全体で使う色。既存の緑系の配色に合わせる。
 export const colors = {
@@ -25,6 +25,18 @@ export function Input({ label, value, set, numeric = false, placeholder = "", di
   return <View style={s.field}>{!hideLabel && <Text style={s.label}>{label}</Text>}<TextInput accessibilityLabel={label}
     style={s.input} value={value} onChangeText={set} editable={!disabled} keyboardType={numeric ? "number-pad" : "default"}
     placeholder={placeholder} placeholderTextColor="#64748b" maxLength={maxLength ?? (numeric ? 4 : 120)} /></View>;
+}
+
+// 時刻（HH:MM）の入力欄。Webではブラウザの時刻ピッカーを使い、アプリでは文字で入力する。
+export function TimeField({ label, value, set, disabled = false }: { label: string; value: string; set: (text: string) => void; disabled?: boolean }) {
+  if (Platform.OS === "web") return createElement("input", {
+    type: "time", "aria-label": label, value, disabled,
+    onChange: (event: { target: { value: string } }) => set(event.target.value),
+    style: { font: "inherit", fontSize: 16, padding: 10, borderRadius: 9, border: `1px solid ${colors.border}`,
+      color: colors.ink, backgroundColor: "#fafcfb", minHeight: 44, boxSizing: "border-box", opacity: disabled ? 0.45 : 1 },
+  });
+  return <TextInput accessibilityLabel={label} style={[s.input, { width: 100 }]} value={value} onChangeText={set} editable={!disabled}
+    placeholder="18:30" placeholderTextColor="#64748b" maxLength={5} keyboardType="numbers-and-punctuation" />;
 }
 
 export function Card({ title, right, children }: { title?: string; right?: ReactNode; children: ReactNode }) {
