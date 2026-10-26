@@ -23,7 +23,7 @@ class PostgresTest(unittest.TestCase):
         url = os.environ["TEST_DATABASE_URL"]
         if urlsplit(url).path != "/ictsol_test":
             raise RuntimeError("誤接続防止のため、テストDB名はictsol_testにしてください。")
-        self.env = patch.dict(os.environ, {"DATABASE_URL": url, "OPENAI_API_KEY": "", "OPENAI_MODEL": ""})
+        self.env = patch.dict(os.environ, {"DATABASE_URL": url, "GEMINI_API_KEY": ""})
         self.env.start()
         self.addCleanup(self.env.stop)
         self.client = self.enterContext(TestClient(app))

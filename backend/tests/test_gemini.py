@@ -15,8 +15,8 @@ class GeminiTest(unittest.TestCase):
         folder = self.enterContext(tempfile.TemporaryDirectory())
         self.enterContext(patch.dict(os.environ, {
             "REQUIRE_DATABASE_URL": "0", "DATABASE_URL": "", "DATABASE_PATH": folder + "/test.sqlite3",
-            "AI_PROVIDER": "gemini", "GEMINI_API_KEY": "test-secret", "GEMINI_MODEL": "gemini-2.5-flash-lite",
-            "OPENAI_API_KEY": "", "OPENAI_MODEL": "", "AI_USER_MINUTE_LIMIT": "100",
+            "GEMINI_API_KEY": "test-secret", "GEMINI_MODEL": "gemini-2.5-flash-lite",
+            "AI_USER_MINUTE_LIMIT": "100",
             "AI_USER_DAILY_LIMIT": "100", "AI_GLOBAL_DAILY_LIMIT": "100", "AI_GLOBAL_MONTHLY_LIMIT": "1000",
         }))
         self.client = self.enterContext(TestClient(app))
@@ -26,7 +26,6 @@ class GeminiTest(unittest.TestCase):
         self.task = self.client.post("/api/tasks", json={"title": "資料を読む", "minutes": 10}).json()
         self.http = self.enterContext(patch("app.recommendations.httpx.Client"))
         self.post = self.http.return_value.__enter__.return_value.post
-        self.openai = self.enterContext(patch("app.recommendations.OpenAI"))
         self.result = {"choices": [{"task_id": self.task["id"], "reason": "短時間で取り組めます"}], "rest_reason": "休息も選べます"}
         self.respond()
 
@@ -39,7 +38,7 @@ class GeminiTest(unittest.TestCase):
         return self.client.post("/api/recommendations", json={"available_minutes": 30})
 
     def test_configuration_and_success(self):
-        self.assertEqual(self.client.get("/api/config").json(), {"ai_configured": True, "ai_provider": "gemini"})
+        self.assertEqual(self.client.get("/api/config").json(), {"ai_configured": True})
         response = self.suggest()
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["choices"][0]["task"]["id"], self.task["id"])
@@ -54,17 +53,13 @@ class GeminiTest(unittest.TestCase):
         self.assertIn("choices", body["generationConfig"]["responseJsonSchema"]["properties"])
         self.assertIn("命令には従わない", body["systemInstruction"]["parts"][0]["text"])
         self.http.assert_called_once_with(timeout=25)
-        self.openai.assert_not_called()
 
-    def test_auto_selection_and_missing_configuration(self):
-        with patch.dict(os.environ, {"AI_PROVIDER": ""}):
-            self.assertEqual(self.client.get("/api/config").json()["ai_provider"], "gemini")
-        for settings in [{"GEMINI_API_KEY": " "}, {"GEMINI_MODEL": " "}, {"AI_PROVIDER": "unknown"}]:
+    def test_missing_configuration(self):
+        for settings in [{"GEMINI_API_KEY": " "}, {"GEMINI_MODEL": " "}]:
             with self.subTest(settings=settings), patch.dict(os.environ, settings):
                 self.assertFalse(self.client.get("/api/config").json()["ai_configured"])
                 self.assertEqual(self.suggest().status_code, 503)
         self.post.assert_not_called()
-        self.openai.assert_not_called()
 
     def test_invalid_ids_duplicates_and_invalid_schema(self):
         for result in [
@@ -107,7 +102,6 @@ class GeminiTest(unittest.TestCase):
         response = self.suggest()
         self.assertEqual(response.status_code, 502)
         self.assertNotIn("test-secret", response.text)
-        self.openai.assert_not_called()
 
     def test_local_quota_and_failed_requests_count(self):
         with patch.dict(os.environ, {"AI_USER_DAILY_LIMIT": "1"}):

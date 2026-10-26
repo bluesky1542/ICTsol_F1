@@ -9,8 +9,6 @@ services:
         value: "1"
       - key: DATABASE_URL
         sync: false
-      - key: AI_PROVIDER
-        value: gemini
       - key: GEMINI_API_KEY
         sync: false
       - key: GEMINI_MODEL

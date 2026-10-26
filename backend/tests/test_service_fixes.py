@@ -3,9 +3,9 @@ import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
-from types import SimpleNamespace
 from unittest.mock import patch
 
+import httpx
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
@@ -20,7 +20,7 @@ class ServiceFixesTest(unittest.TestCase):
         self.temp = self.enterContext(tempfile.TemporaryDirectory())
         self.enterContext(patch.dict(os.environ, {
             "DATABASE_URL": "", "REQUIRE_DATABASE_URL": "0", "DATABASE_PATH": self.temp + "/review.sqlite3",
-            "AI_PROVIDER": "openai", "OPENAI_API_KEY": "test", "OPENAI_MODEL": "test", "AI_USER_MINUTE_LIMIT": "10",
+            "GEMINI_API_KEY": "test", "GEMINI_MODEL": "test", "AI_USER_MINUTE_LIMIT": "10",
             "AI_USER_DAILY_LIMIT": "20", "AI_GLOBAL_DAILY_LIMIT": "100", "AI_GLOBAL_MONTHLY_LIMIT": "1000",
         }))
         self.client = self.enterContext(TestClient(app))
@@ -52,16 +52,17 @@ class ServiceFixesTest(unittest.TestCase):
         self.assertEqual(self.client.post("/api/auth/login", json=wrong).status_code, 429)
 
     def test_ai_limits_stop_before_external_call_and_survive_restart(self):
-        with patch.dict(os.environ, {"AI_USER_DAILY_LIMIT": "2"}), patch("app.recommendations.OpenAI") as client:
-            parse = client.return_value.__enter__.return_value.responses.parse
-            parse.return_value = SimpleNamespace(status="completed", output_parsed=AIResult(choices=[], rest_reason="休息"))
+        with patch.dict(os.environ, {"AI_USER_DAILY_LIMIT": "2"}), patch("app.recommendations.httpx.Client") as client:
+            post = client.return_value.__enter__.return_value.post
+            body = {"candidates": [{"finishReason": "STOP", "content": {"parts": [{"text": AIResult(choices=[], rest_reason="休息").model_dump_json()}]}}]}
+            post.return_value = httpx.Response(200, json=body, request=httpx.Request("POST", "https://generativelanguage.googleapis.com"))
             for _ in range(2):
                 self.assertEqual(self.client.post("/api/recommendations", json={"available_minutes": 30}).status_code, 200)
             initialize()
             result = self.client.post("/api/recommendations", json={"available_minutes": 30})
             self.assertEqual(result.status_code, 429)
             self.assertIn("retry-after", result.headers)
-            self.assertEqual(parse.call_count, 2)
+            self.assertEqual(post.call_count, 2)
 
     def test_parallel_users_cannot_exceed_global_limit(self):
         def reserve(user_id):
@@ -88,10 +89,12 @@ class ServiceFixesTest(unittest.TestCase):
                 reserve_ai_call(1)
 
     def test_quota_period_rollover_and_failures_count(self):
-        with patch.dict(os.environ, {"AI_USER_DAILY_LIMIT": "1"}), patch("app.recommendations.OpenAI") as client:
-            client.return_value.__enter__.return_value.responses.parse.return_value = SimpleNamespace(status="incomplete", output_parsed=None)
+        with patch.dict(os.environ, {"AI_USER_DAILY_LIMIT": "1"}), patch("app.recommendations.httpx.Client") as client:
+            post = client.return_value.__enter__.return_value.post
+            post.return_value = httpx.Response(200, json={"candidates": [{"finishReason": "MAX_TOKENS"}]}, request=httpx.Request("POST", "https://generativelanguage.googleapis.com"))
             self.assertEqual(self.client.post("/api/recommendations", json={"available_minutes": 30}).status_code, 502)
             self.assertEqual(self.client.post("/api/recommendations", json={"available_minutes": 30}).status_code, 429)
+            self.assertEqual(post.call_count, 1)
         with database() as db:
             db.execute("UPDATE ai_usage SET expires_at=0")
         reserve_ai_call(self.user["id"])

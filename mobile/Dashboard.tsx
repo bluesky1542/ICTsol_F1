@@ -41,7 +41,6 @@ export default function Dashboard({ username, logout }: { username: string; logo
   const [activities, setActivities] = useState<Activity[]>([]);
   const [condition, setCondition] = useState<Condition | null>(null);
   const [aiConfigured, setAIConfigured] = useState(false);
-  const [aiProvider, setAIProvider] = useState<"gemini" | "openai" | null>(null);
   const [connected, setConnected] = useState(false);
   const [busy, setBusy] = useState(false);
   const lock = useRef(false);
@@ -93,12 +92,12 @@ export default function Dashboard({ username, logout }: { username: string; logo
   function invalidate() { setSuggestions(null); setSelected(null); }
   async function refresh() {
     const [nextTasks, nextCondition, config, nextActivities, nextReflections, nextSummary] = await Promise.all([
-      api<Task[]>("/tasks"), api<Condition | null>("/condition"), api<{ ai_configured: boolean; ai_provider?: "gemini" | "openai" | null }>("/config"),
+      api<Task[]>("/tasks"), api<Condition | null>("/condition"), api<{ ai_configured: boolean }>("/config"),
       api<Activity[]>("/activities"), api<Reflection[]>("/reflections"),
       api<ReflectionSummary>("/reflections/summary"),
     ]);
     setNow(Date.now()); setActivities(nextActivities); setReflections(nextReflections); setReflectionSummary(nextSummary);
-    setTasks(nextTasks); setCondition(nextCondition); setAIConfigured(config.ai_configured); setAIProvider(config.ai_provider ?? null); setConnected(true); invalidate();
+    setTasks(nextTasks); setCondition(nextCondition); setAIConfigured(config.ai_configured); setConnected(true); invalidate();
   }
   useEffect(() => { void run(refresh); }, []);
 
@@ -184,8 +183,8 @@ export default function Dashboard({ username, logout }: { username: string; logo
           onPress={() => { setUseCalendar(!useCalendar); invalidate(); }} /><Text style={s.muted}>保存済み予定から次の予定までの時間を計算します。端末から取り込んだ予定は変更後や24時間経過後に再取り込みしてください。手入力の予定にこの制限はありません。</Text></>}
         <Input label="いま使える時間（分）" value={available} set={v => { setAvailable(v); invalidate(); }} numeric disabled={busy} />
         <Input label="いまいる場所" value={currentPlace} set={v => { setCurrentPlace(v); invalidate(); }} placeholder="例：自宅（タスクの場所と一致）" disabled={busy} />
-        <Text style={s.muted}>候補タスクの内容・入力した調子・空き時間・場所を{aiProvider === "gemini" ? "Google（Gemini）" : aiProvider === "openai" ? "OpenAI" : "設定済みのAIサービス"}へ送信します。</Text>
-        <Text style={s.muted}>{aiProvider === "gemini" ? "無料枠には利用上限があります。有料設定では料金が発生する場合があります。無料枠では送信内容がGoogleの製品改善に利用される場合があるため、個人情報・機密情報を入力しないでください。" : aiProvider === "openai" ? "提案の取得にはAPI利用料金が発生します。" : "利用条件・料金は設定されたAIサービスによって異なります。"}</Text>
+        <Text style={s.muted}>候補タスクの内容・入力した調子・空き時間・場所をGoogle（Gemini）へ送信します。</Text>
+        <Text style={s.muted}>無料枠には利用上限があります。課金を有効にすると料金が発生する場合があります。無料枠では送信内容がGoogleの製品改善に利用される場合があるため、個人情報・機密情報を入力しないでください。</Text>
         {!aiConfigured && <Text style={s.muted}>AI提案は準備中です。タスクや予定の保存は利用できます。</Text>}
         <Button title={busy ? "処理中…" : "AIの提案を取得"} selected disabled={busy || !connected || !conditionFresh || !aiConfigured}
           onPress={() => void run(async () => {

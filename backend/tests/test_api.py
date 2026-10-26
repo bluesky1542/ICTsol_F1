@@ -2,9 +2,9 @@ import json
 import os
 import tempfile
 import unittest
-from types import SimpleNamespace
 from unittest.mock import patch
 
+import httpx
 from fastapi.testclient import TestClient
 from app.main import app
 from app.models import AIChoice, AIResult
@@ -13,7 +13,7 @@ from app.models import AIChoice, AIResult
 class APITest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.env = patch.dict(os.environ, {"REQUIRE_DATABASE_URL": "0", "DATABASE_URL": "", "DATABASE_PATH": self.temp.name + "/test.sqlite3", "AI_PROVIDER": "openai", "OPENAI_API_KEY": "", "OPENAI_MODEL": ""})
+        self.env = patch.dict(os.environ, {"REQUIRE_DATABASE_URL": "0", "DATABASE_URL": "", "DATABASE_PATH": self.temp.name + "/test.sqlite3", "GEMINI_API_KEY": ""})
         self.env.start()
         self.client = TestClient(app)
         self.client.__enter__()
@@ -33,22 +33,27 @@ class APITest(unittest.TestCase):
     def ready(self):
         self.client.put("/api/condition", json={"level": "tired"})
 
+    def respond(self, post, result, finish_reason="STOP"):
+        body = {"candidates": [{"finishReason": finish_reason, "content": {"parts": [{"text": result.model_dump_json()}]}}]}
+        post.return_value = httpx.Response(200, json=body, request=httpx.Request("POST", "https://generativelanguage.googleapis.com"))
+
     def test_five_conditions_persist_and_reach_ai(self):
         self.create()
         labels = {
             "slightly_tired": "少し疲れてる", "tired": "疲れてる",
             "normal": "普通", "slightly_good": "少し元気", "good": "元気",
         }
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "test", "OPENAI_MODEL": "test-model"}), patch("app.recommendations.OpenAI") as client:
-            parse = client.return_value.__enter__.return_value.responses.parse
-            parse.return_value = SimpleNamespace(status="completed", output_parsed=AIResult(choices=[], rest_reason="休息も選べます"))
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "test", "GEMINI_MODEL": "test-model"}), patch("app.recommendations.httpx.Client") as client:
+            post = client.return_value.__enter__.return_value.post
+            self.respond(post, AIResult(choices=[], rest_reason="休息も選べます"))
             for level, label in labels.items():
                 with self.subTest(level=level):
                     self.assertEqual(self.client.put("/api/condition", json={"level": level}).status_code, 200)
                     self.assertEqual(self.client.get("/api/condition").json()["level"], level)
                     response = self.client.post("/api/recommendations", json={"available_minutes": 30})
                     self.assertEqual(response.status_code, 200, response.text)
-                    payload = json.loads(parse.call_args.kwargs["input"])
+                    body = post.call_args.kwargs["json"]
+                    payload = json.loads(body["contents"][0]["parts"][0]["text"])
                     self.assertEqual(payload["condition"], level)
                     self.assertEqual(payload["condition_label"], label)
         self.assertEqual(self.client.put("/api/condition", json={"level": "unknown"}).status_code, 422)
@@ -95,17 +100,15 @@ class APITest(unittest.TestCase):
         self.ready()
         task = self.create()
         valid = AIChoice(task_id=task["id"], reason="短時間で取り組めます")
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "test", "OPENAI_MODEL": "test-model"}), patch("app.recommendations.OpenAI") as client:
-            parse = client.return_value.__enter__.return_value.responses.parse
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "test", "GEMINI_MODEL": "test-model"}), patch("app.recommendations.httpx.Client") as client:
+            post = client.return_value.__enter__.return_value.post
             for choices, expected in [([valid], 200), ([AIChoice(task_id=999, reason="不正")], 502), ([valid, valid], 502)]:
-                parse.return_value = SimpleNamespace(status="completed", output_parsed=AIResult(choices=choices, rest_reason="休息も選べます"))
+                self.respond(post, AIResult(choices=choices, rest_reason="休息も選べます"))
                 self.assertEqual(self.client.post("/api/recommendations", json={"available_minutes": 30}).status_code, expected)
-            self.assertFalse(parse.call_args.kwargs["store"])
-            parse.return_value = SimpleNamespace(status="completed", output_parsed=None)
+            self.assertEqual(post.call_args.kwargs["headers"], {"x-goog-api-key": "test"})
+            self.respond(post, AIResult(choices=[valid], rest_reason="休息"), finish_reason="MAX_TOKENS")
             self.assertEqual(self.client.post("/api/recommendations", json={"available_minutes": 30}).status_code, 502)
-            from openai import APIConnectionError
-            import httpx2
-            parse.side_effect = APIConnectionError(request=httpx2.Request("POST", "https://api.openai.com/v1/responses"))
+            post.side_effect = httpx.ConnectError("接続失敗")
             response = self.client.post("/api/recommendations", json={"available_minutes": 30})
             self.assertEqual(response.status_code, 502)
 

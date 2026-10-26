@@ -63,8 +63,9 @@ def hello() -> dict[str, str]:
 
 @app.get("/api/config")
 def config(user: User):
-    provider, key, model = recommendations.configuration()
-    return {"ai_configured": bool(key and model), "ai_provider": provider}
+    key = os.getenv("GEMINI_API_KEY", "").strip()
+    model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite").strip()
+    return {"ai_configured": bool(key and model)}
 
 
 @app.get("/api/tasks", response_model=list[Task])

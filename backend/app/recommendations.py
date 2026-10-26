@@ -5,7 +5,6 @@ from urllib.parse import quote
 
 import httpx
 from fastapi import HTTPException
-from openai import OpenAI, OpenAIError
 from pydantic import ValidationError
 
 from .models import AIResult
@@ -27,16 +26,6 @@ INSTRUCTIONS = (
     "各候補は代替案であり、全て実行する計画ではありません。無理なら候補0件でも構いません。"
     "休息も常に選べるようrest_reasonを記載してください。診断や治療の助言はしないでください。"
 )
-
-
-def configuration():
-    provider = os.getenv("AI_PROVIDER", "").strip().lower() or (
-        "gemini" if os.getenv("GEMINI_API_KEY", "").strip() else "openai")
-    if provider == "gemini":
-        return provider, os.getenv("GEMINI_API_KEY", "").strip(), os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite").strip()
-    if provider == "openai":
-        return provider, os.getenv("OPENAI_API_KEY", "").strip(), os.getenv("OPENAI_MODEL", "").strip()
-    return None, "", ""
 
 
 def generate_gemini(key: str, model: str, payload: str) -> AIResult:
@@ -70,7 +59,8 @@ def generate_gemini(key: str, model: str, payload: str) -> AIResult:
 
 
 def generate(candidates: list[dict], condition: str, minutes: int, place: str, user_id: int) -> AIResult:
-    provider, key, model = configuration()
+    key = os.getenv("GEMINI_API_KEY", "").strip()
+    model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite").strip()
     if not key or not model:
         raise HTTPException(503, "AI提案は準備中です。管理者による設定をお待ちください。")
     reserve_ai_call(user_id)
@@ -81,21 +71,11 @@ def generate(candidates: list[dict], condition: str, minutes: int, place: str, u
         "place": place, "tasks": candidates,
     }, ensure_ascii=False)
     try:
-        if provider == "gemini":
-            result = generate_gemini(key, model, payload)
-        else:
-            with OpenAI(api_key=key, timeout=25, max_retries=0) as client:
-                response = client.responses.parse(
-                    model=model, store=False, instructions=INSTRUCTIONS,
-                    input=payload, text_format=AIResult, max_output_tokens=2000,
-                )
-            result = response.output_parsed
-            if response.status != "completed" or result is None:
-                raise ValueError("提案が完了しませんでした")
+        result = generate_gemini(key, model, payload)
         ids = [choice.task_id for choice in result.choices]
         if len(ids) != len(set(ids)) or not set(ids).issubset({t["id"] for t in candidates}):
             raise ValueError("候補以外のタスクが含まれています")
         return result
-    except (OpenAIError, httpx.HTTPError, ValidationError, ValueError):
+    except (httpx.HTTPError, ValidationError, ValueError):
         # APIキーや外部サービスの生のエラーはクライアントへ返さない。
         raise HTTPException(502, "AIの提案を取得できませんでした。設定・利用枠を確認し、時間をおいて再試行してください。") from None

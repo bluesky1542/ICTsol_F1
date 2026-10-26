@@ -21,7 +21,7 @@ ICTソリューション実践のF1班の作業リポジトリです。
 - スマホアプリ：Expo + React Native + TypeScript
 - バックエンド：Python + FastAPI
 - 保存先：ローカルはSQLite、無料公開時はSupabase（PostgreSQL）
-- 生成AI：Gemini API（無料枠を利用可能）、OpenAI API（既存設定も利用可能）
+- 生成AI：Gemini API（無料枠を利用可能）
 
 詳しい方針は [`docs/開発方針.md`](docs/開発方針.md) を確認してください。
 構成・DB・API・AI処理などの詳細は [技術仕様書](docs/技術仕様書.md)、無料公開の設定は [公開手順](docs/公開手順.md) にまとめています。
@@ -150,7 +150,6 @@ SDK 57の `expo-calendar` は[公式案内](https://docs.expo.dev/versions/v57.0
 2. `backend/.env.example` を `backend/.env` としてコピーし、以下を設定する。既に`.env`がある場合は上書きせず、設定を追加・変更する。
 
 ```dotenv
-AI_PROVIDER=gemini
 GEMINI_API_KEY=自分のAPIキー
 GEMINI_MODEL=gemini-2.5-flash-lite
 ```
@@ -158,7 +157,9 @@ GEMINI_MODEL=gemini-2.5-flash-lite
 3. バックエンドを再起動し、画面の「最新の状態に更新」を押す。
 4. タスクと今の調子を登録し、空き時間・場所を入力して「AIの提案を取得」を押す。
 
-2026-10-26確認時点で`gemini-2.5-flash-lite`の標準テキスト入出力には無料枠があります。対象モデル・利用上限は変更されるため、[公式料金表](https://ai.google.dev/gemini-api/docs/pricing)と[AI Studioの利用上限](https://aistudio.google.com/usage?tab=rate-limit)を確認してください。アプリからはFree Tierか有料プロジェクトかを判定できません。有料プロジェクトでは料金が発生する可能性があります。
+2026-10-26確認時点で`gemini-2.5-flash-lite`の標準テキスト入出力には無料枠があります。対象モデル・利用上限は変更されるため、[公式料金表](https://ai.google.dev/gemini-api/docs/pricing)と[AI Studioの利用上限](https://aistudio.google.com/usage?tab=rate-limit)を確認してください。アプリからはFree Tierか有料プロジェクトかを判定できません。
+
+クレジットカード（請求先アカウント）は登録しないでください。Google AI Studio / Google Cloud で課金（Billing）を有効にしなければ有料枠に切り替わらず、料金は発生しません。課金を有効にした場合は料金が発生する可能性があります。
 
 無料枠では入力・出力がGoogleの製品改善に利用され、人手で確認される場合があります。個人情報・機密情報をタスク名や場所に入力しないでください。[利用規約](https://ai.google.dev/gemini-api/terms)上、利用者は18歳以上で、18歳未満が利用する可能性の高いアプリには利用できません。チームの対象年齢・公開範囲が条件を満たすことを確認してください。
 
@@ -166,15 +167,9 @@ Geminiが利用上限を返した場合は再試行を案内し、自動再試�
 
 APIキーはチャットやGitHubに貼らず、バックエンドの `.env` または公開先の秘密環境変数にだけ設定してください。`mobile/.env`や`EXPO_PUBLIC_`の変数には入れません。キーが未設定でもタスク管理は利用できますが、AI提案は無効になります。
 
-### 既存のOpenAI設定を使う場合
+AIには未完了かつ所要時間・場所に合う候補を最大30件送信し、最大3件の代替候補と理由、休息の理由を受け取ります。疲労度は当面「少し疲れてる・疲れてる・普通・少し元気・元気」の5択アンケートで入力し、その回答をAIに渡します（自動推定は行いません）。GeminiはJSON Schemaによる構造化出力を使用し、候補外ID・重複・拒否・途中で終了した応答・タイムアウトはエラーとして扱います。
 
-`AI_PROVIDER=openai`に変更し、`OPENAI_API_KEY`と`OPENAI_MODEL`を設定します。モデルはResponses APIとStructured Outputsに対応したものを指定してください。OpenAIを自動フォールバックとしては呼び出しません。
-
-`AI_PROVIDER`未指定の場合は、`GEMINI_API_KEY`があればGemini、それ以外は従来のOpenAI設定を使います。新しい設定例とRender BlueprintはGeminiを明示的に選びます。
-
-AIには未完了かつ所要時間・場所に合う候補を最大30件送信し、最大3件の代替候補と理由、休息の理由を受け取ります。疲労度は当面「少し疲れてる・疲れてる・普通・少し元気・元気」の5択アンケートで入力し、その回答をAIに渡します（自動推定は行いません）。GeminiはJSON Schemaによる構造化出力、OpenAIはStructured Outputsを使用し、候補外ID・重複・拒否・途中で終了した応答・タイムアウトはエラーとして扱います。
-
-提案取得時にはタスク名・締切・優先度・集中度・所要時間・場所・入力した調子を選択したAIサービスへ送信します。画面に送信先と利用条件を表示します。候補がない場合はAIを呼び出さず、その旨を表示します。エラー時に偽のAI提案を表示することはありません。
+提案取得時にはタスク名・締切・優先度・集中度・所要時間・場所・入力した調子をGoogle（Gemini）へ送信します。画面に送信先と利用条件を表示します。候補がない場合はAIを呼び出さず、その旨を表示します。エラー時に偽のAI提案を表示することはありません。
 
 ローカルのデータは `backend/data/app.sqlite3` に保存され、Gitには含まれません。`DATABASE_URL` にPostgreSQL接続URLを指定すると、Supabase等の外部DBを使用します。未指定ならSQLiteを使い、`DATABASE_PATH`でファイルの保存先を変更できます。公開時は `REQUIRE_DATABASE_URL=1` を指定し、外部DBの設定漏れを防ぎます。タスク・調子・予定に加え、「取り組む／休息」の選択と選択時の調子をユーザー別に保存し、直近50件を画面に表示します。提案そのものは画面内のみです。履歴は選択の記録であり、実行や完了を意味しません。
 
