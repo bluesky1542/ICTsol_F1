@@ -6,7 +6,7 @@ import { Achievement, Activity, api, Condition, ConditionLevel, Level, Reflectio
 import CalendarPanel from "./CalendarPanel";
 import { isDemo } from "./demo";
 import { askNotificationPermission, scheduleNotification } from "./notify";
-import { Button, Card, colors, Details, Hint, Input, Label, Row, Stars, Tabs, s as ui } from "./ui";
+import { Button, Card, colors, Details, Hint, Input, Label, Row, Stars, Tabs, TimeField, s as ui } from "./ui";
 
 type Tab = "now" | "calendar";
 const levels: [Level, string][] = [["low", "低"], ["medium", "中"], ["high", "高"]];
@@ -27,18 +27,6 @@ function normalizeTime(text: string) {
   const match = text.trim().replace("：", ":").match(/^(\d{1,2}):?(\d{2})$/);
   if (!match || Number(match[1]) > 23 || Number(match[2]) > 59) return null;
   return `${match[1].padStart(2, "0")}:${match[2]}`;
-}
-// HH:MM を分単位でずらす（0:00〜23:45 の範囲に収める）。
-function shiftTime(time: string, minutes: number) {
-  const [h, m] = time.split(":").map(Number);
-  const total = Math.min(23 * 60 + 45, Math.max(0, h * 60 + m + minutes));
-  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
-}
-// 終了予定の初期値：今から3時間後を30分単位に切り上げた時刻（日本時間）。
-function suggestedEnd(time: number) {
-  const minutes = Math.ceil((Number(new Date(time + 9 * 3600000).toISOString().slice(11, 13)) * 60 + 180 +
-    Number(new Date(time + 9 * 3600000).toISOString().slice(14, 16))) / 30) * 30;
-  return shiftTime("00:00", minutes);
 }
 // 振り返りは終了予定の30分前から出す。
 const REFLECTION_LEAD = 30 * 60000;
@@ -92,7 +80,6 @@ export default function Dashboard({ username, logout }: { username: string; logo
   const [comment, setComment] = useState("");
   const [plan, setPlan] = useState<WorkPlan | null>(null);
   const [endDraft, setEndDraft] = useState("");
-  const [editingEnd, setEditingEnd] = useState(false);
   const [reflectionOpen, setReflectionOpen] = useState(false);
   // 「あとで」を押したら、この時刻まで横からのパネルを出さない。
   const [snoozeUntil, setSnoozeUntil] = useState(0);
@@ -105,7 +92,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
   // 終了予定は保存した日（日本時間）だけ有効。日付が変わったら前日の予定で振り返りを出さない。
   const workEnd = plan?.day === reflectionDay ? plan.end_time : null;
   // 入力欄は保存済みの終了予定で初期化する。
-  useEffect(() => { setEndDraft(workEnd ?? suggestedEnd(Date.now())); }, [workEnd]);
+  useEffect(() => { setEndDraft(workEnd ?? ""); }, [workEnd]);
   const conditionFresh = !!condition && now < Date.parse(condition.expires_at);
   // 終了予定は日本時間の今日の時刻として扱う。
   const dueAt = workEnd ? Date.parse(`${reflectionDay}T${workEnd}:00+09:00`) - REFLECTION_LEAD : null;
@@ -214,7 +201,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
       const end = normalizeTime(text);
       if (!end) throw new Error("終了時刻は 18:30 のように入力してください。");
       const saved = await api<WorkPlan>("/reflections/plan", "PUT", { end_time: end });
-      setPlan(saved); setEditingEnd(false); setNow(Date.now());
+      setPlan(saved); setNow(Date.now());
       const due = Date.parse(`${saved.day}T${saved.end_time}:00+09:00`) - REFLECTION_LEAD;
       setNotice(due <= Date.now() ? "終了予定が近いので、振り返りを出しました。" : "終了予定を保存しました。");
     });
@@ -271,32 +258,13 @@ export default function Dashboard({ username, logout }: { username: string; logo
               setCondition(saved); setNow(Date.now()); invalidate(); setNotice("今の調子を保存しました。");
             })} />)}</Row>
           {condition && !conditionFresh && <Hint warn>日付が変わりました。今日の調子を選んでください。</Hint>}
-        </Card>
-
-        {/* 終了予定：決めた時刻の30分前に振り返りを出す */}
-        <Card title="今日は何時まで作業する？">
-          {workEnd && !editingEnd ? <>
-            <View style={s.endRow}>
-              <Text style={s.bigTime}>{workEnd}</Text><Text style={s.body}>まで</Text>
-              <View style={s.spacer} />
-              <Button small title="変更" disabled={busy || isDemo} onPress={() => { setEndDraft(workEnd); setEditingEnd(true); }} />
-            </View>
-            <Hint>{todayReflection ? "今日の振り返りは回答済みです ✓" : reflectionDue ? "振り返りの時間です。おつかれさまでした。"
-              : `🔔 ${clock(dueAt!)}ごろに振り返りをお知らせします`}</Hint>
-          </> : <>
-            <Text accessibilityLabel={`終了時刻 ${endDraft}`} style={[s.bigTime, s.timeCenter]}>{endDraft}</Text>
-            <View style={s.stepper}>
-              {([[-60, "−1時間", "1時間早くする"], [-15, "−15分", "15分早くする"], [15, "+15分", "15分遅くする"], [60, "+1時間", "1時間遅くする"]] as const)
-                .map(([step, text, label]) => <View key={step} style={s.step}>
-                  <Button small title={text} label={label} disabled={busy || isDemo} onPress={() => setEndDraft(shiftTime(endDraft, step))} />
-                </View>)}
-            </View>
-            <Row>
-              <Button primary title="この時間にする" disabled={busy || !connected || isDemo} onPress={() => saveWorkEnd(endDraft)} />
-              {!!workEnd && <Button title="やめる" disabled={busy} onPress={() => setEditingEnd(false)} />}
-            </Row>
-            <Hint>終わる30分前に、今日の振り返りをお知らせします。</Hint>
-          </>}
+          <Label>今日は何時まで作業する？</Label>
+          <Row>
+            <TimeField label="作業の終了時刻" value={endDraft} set={setEndDraft} disabled={busy || !connected || isDemo} />
+            <Button small primary title={workEnd ? "変更" : "決定"} disabled={busy || !connected || isDemo || !endDraft || endDraft === workEnd}
+              onPress={() => saveWorkEnd(endDraft)} />
+          </Row>
+          {dueAt !== null && !todayReflection && !reflectionDue && <Hint>🔔 {clock(dueAt)}ごろに振り返りをお知らせします</Hint>}
         </Card>
 
         <Card title="AIに次の一歩を提案してもらう">
@@ -442,11 +410,6 @@ const s = StyleSheet.create({
   metaRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6 },
   badge: { fontSize: 11, fontWeight: "700", color: colors.primary, backgroundColor: colors.soft, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, overflow: "hidden" },
   minutesInput: { width: 90 },
-  endRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8 },
-  bigTime: { fontSize: 32, fontWeight: "700", color: colors.ink, fontVariant: ["tabular-nums"] },
-  timeCenter: { textAlign: "center" },
-  stepper: { flexDirection: "row", gap: 6 }, step: { flex: 1 },
-  spacer: { flex: 1 },
   due: { fontSize: 12, fontWeight: "700", color: colors.text, backgroundColor: colors.line, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, overflow: "hidden" },
   dueSoon: { color: "#8a4b00", backgroundColor: "#fdecc8" },
   dueOver: { color: "#9a2920", backgroundColor: "#fde2dd" },
