@@ -18,7 +18,6 @@ const conditions: [ConditionLevel, string][] = [
   ["good", "元気"],
 ];
 const achievements: [Achievement, string][] = [["done", "できた"], ["partial", "途中まで"], ["not_done", "できなかった"]];
-const availablePresets = ["15", "30", "60", "90"];
 // 「1830」「9:00」なども HH:MM にそろえる。正しくなければ null。
 function normalizeTime(text: string) {
   const match = text.trim().replace("：", ":").match(/^(\d{1,2}):?(\d{2})$/);
@@ -68,7 +67,6 @@ export default function Dashboard({ username, logout }: { username: string; logo
   const [place, setPlace] = useState("");
   const [editing, setEditing] = useState<number | null>(null);
   const [available, setAvailable] = useState("30");
-  const [customAvailable, setCustomAvailable] = useState(false);
   const [currentPlace, setCurrentPlace] = useState("");
   const [suggestions, setSuggestions] = useState<Suggestions | null>(null);
   const [selected, setSelected] = useState<number | "rest" | null>(null);
@@ -280,14 +278,9 @@ export default function Dashboard({ username, logout }: { username: string; logo
           <Card title="AIに次の一歩を提案してもらう">
             <Label>使える時間</Label>
             <Row>
-              {availablePresets.map(value => <Button key={value} small title={`${value}分`} disabled={busy}
-                selected={!customAvailable && available === value}
-                onPress={() => { setCustomAvailable(false); setAvailableAndReset(value); }} />)}
-              <Button small title="その他" disabled={busy} selected={customAvailable || !availablePresets.includes(available)}
-                onPress={() => setCustomAvailable(true)} />
+              <View style={s.minutesInput}><Input label="使える時間（分）" hideLabel value={available} set={setAvailableAndReset} numeric placeholder="分" disabled={busy} /></View>
+              <Text style={ui.hint}>分</Text>
             </Row>
-            {(customAvailable || !availablePresets.includes(available)) &&
-              <Input label="使える時間（分）" hideLabel value={available} set={setAvailableAndReset} numeric placeholder="分" disabled={busy} />}
             {calendarLinked && <Row><Button small title={useCalendar ? "✓ 次の予定までに収める" : "予定を考慮しない"} selected={useCalendar} disabled={busy}
               onPress={() => { setUseCalendar(!useCalendar); invalidate(); }} /></Row>}
 
