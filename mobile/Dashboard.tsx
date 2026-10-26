@@ -20,6 +20,8 @@ const conditions: [ConditionLevel, string][] = [
 const achievements: [Achievement, string][] = [["done", "できた"], ["partial", "途中まで"], ["not_done", "できなかった"]];
 const availablePresets = ["15", "30", "60", "90"];
 const minutePresets = ["15", "30", "60"];
+// 締切のよく使う選択肢（今日から何日後か。null は締切なし）。
+const deadlinePresets: [number | null, string][] = [[null, "なし"], [0, "今日"], [1, "明日"], [3, "3日後"], [7, "1週間後"]];
 const endPresets = ["17:00", "18:00", "19:00", "20:00", "21:00", "22:00"];
 // 「1830」「9:00」なども HH:MM にそろえる。正しくなければ null。
 function normalizeTime(text: string) {
@@ -55,7 +57,6 @@ export default function Dashboard({ username, logout }: { username: string; logo
   const [concentration, setConcentration] = useState<Level>("medium");
   const [place, setPlace] = useState("");
   const [editing, setEditing] = useState<number | null>(null);
-  const [showDetails, setShowDetails] = useState(false);
   const [available, setAvailable] = useState("30");
   const [customAvailable, setCustomAvailable] = useState(false);
   const [currentPlace, setCurrentPlace] = useState("");
@@ -131,11 +132,11 @@ export default function Dashboard({ username, logout }: { username: string; logo
   function changeTab(next: Tab) { setTab(next); scroll.current?.scrollTo({ y: 0, animated: false }); }
   function resetForm() {
     setEditing(null); setTitle(""); setMinutes("20"); setDeadline("");
-    setPriority("medium"); setConcentration("medium"); setPlace(""); setShowDetails(false);
+    setPriority("medium"); setConcentration("medium"); setPlace("");
   }
   function startEdit(task: Task) {
     setEditing(task.id); setTitle(task.title); setMinutes(String(task.minutes)); setDeadline(task.deadline || "");
-    setPriority(task.priority); setConcentration(task.concentration); setPlace(task.place); setShowDetails(true);
+    setPriority(task.priority); setConcentration(task.concentration); setPlace(task.place);
     scroll.current?.scrollTo({ y: taskCardY.current, animated: true });
   }
   function integer(value: string) {
@@ -318,14 +319,19 @@ export default function Dashboard({ username, logout }: { username: string; logo
             <View style={s.minutesInput}><Input label="かかる時間（分）" hideLabel value={minutes} set={setMinutes} numeric placeholder="分" disabled={busy} /></View>
             <Text style={ui.hint}>分</Text>
           </Row>
-          <Details title="詳細（締切・優先度・集中度・場所）" open={showDetails} onToggle={setShowDetails}>
-            <Input label="締切" value={deadline} set={setDeadline} placeholder="2026-10-15" disabled={busy} />
-            <Label>優先度</Label><Row>{levels.map(([key, text]) => <Button key={key} small title={text}
-              selected={priority === key} disabled={busy} onPress={() => setPriority(key)} />)}</Row>
-            <Label>必要な集中度</Label><Row>{levels.map(([key, text]) => <Button key={key} small title={text}
-              selected={concentration === key} disabled={busy} onPress={() => setConcentration(key)} />)}</Row>
-            <Input label="場所（空欄ならどこでも）" value={place} set={setPlace} placeholder="例：自宅" disabled={busy} />
-          </Details>
+          <Label>締切</Label>
+          <Row>
+            {deadlinePresets.map(([days, text]) => {
+              const value = days === null ? "" : japanToday(now + days * 86400000);
+              return <Button key={text} small title={text} selected={deadline === value} disabled={busy} onPress={() => setDeadline(value)} />;
+            })}
+            <View style={s.dateInput}><Input label="締切（日付）" hideLabel value={deadline} set={setDeadline} placeholder="2026-10-15" maxLength={10} disabled={busy} /></View>
+          </Row>
+          <Label>優先度</Label><Row>{levels.map(([key, text]) => <Button key={key} small title={text}
+            selected={priority === key} disabled={busy} onPress={() => setPriority(key)} />)}</Row>
+          <Label>必要な集中度</Label><Row>{levels.map(([key, text]) => <Button key={key} small title={text}
+            selected={concentration === key} disabled={busy} onPress={() => setConcentration(key)} />)}</Row>
+          <Input label="場所（空欄ならどこでも）" value={place} set={setPlace} placeholder="例：自宅" disabled={busy} />
           <Row><Button primary title={editing === null ? "追加" : "保存"} disabled={busy || !connected} onPress={() => void run(saveTask)} />
             {editing !== null && <Button title="やめる" disabled={busy} onPress={resetForm} />}</Row>
           {!tasks.length && <Hint>まだタスクがありません。上の欄から追加しましょう。</Hint>}
@@ -428,6 +434,7 @@ const s = StyleSheet.create({
   metaRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6 },
   badge: { fontSize: 11, fontWeight: "700", color: colors.primary, backgroundColor: colors.soft, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, overflow: "hidden" },
   minutesInput: { width: 90 },
+  dateInput: { width: 140 },
   body: { fontSize: 15, lineHeight: 23, color: colors.text },
   suggestion: { padding: 14, backgroundColor: colors.soft, borderRadius: 12, gap: 10 },
   rest: { backgroundColor: "#f4f1ea" },
