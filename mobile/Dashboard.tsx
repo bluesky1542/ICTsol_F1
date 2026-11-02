@@ -189,7 +189,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
     resetForm(); invalidate(); setNotice("タスクを保存しました。");
   }
   async function toggleTask(task: Task) {
-    await api<Task>(`/tasks/${task.id}`, "PATCH", { completed: !task.completed, parent_id: task.parent_id });
+    await api<Task>(`/tasks/${task.id}`, "PATCH", { completed: !task.completed });
     setTasks(await api<Task[]>("/tasks")); invalidate();
   }
   async function choose(taskId: number | null) {
