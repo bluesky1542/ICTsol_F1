@@ -74,6 +74,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
   const [concentration, setConcentration] = useState<Level>("medium");
   const [place, setPlace] = useState("");
   const [editing, setEditing] = useState<number | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
   const [parentId, setParentId] = useState<number | null>(null);
   const [parentOpen, setParentOpen] = useState(false);
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
@@ -206,6 +207,16 @@ export default function Dashboard({ username, logout }: { username: string; logo
     await api<Task>(`/tasks/${task.id}`, "PATCH", { completed: !task.completed });
     setTasks(await api<Task[]>("/tasks")); invalidate();
   }
+  async function deleteTask(task: Task) {
+    const removed = new Set([task.id, ...descendantIds(tasks, task.id)]);
+    const reset = editing !== null && (removed.has(editing) || descendantIds(tasks, editing).has(task.id));
+    await api(`/tasks/${task.id}`, "DELETE");
+    const nextTasks = await api<Task[]>("/tasks");
+    setTasks(nextTasks); setConfirmDelete(null); invalidate();
+    if (reset || (editing !== null && !nextTasks.some(value => value.id === editing))) resetForm();
+    else if (parentId !== null && !nextTasks.some(value => value.id === parentId)) setParentId(null);
+    setNotice("タスクを削除しました。");
+  }
   async function choose(taskId: number | null) {
     await api<Activity>("/activities", "POST", { task_id: taskId });
     setSelected(taskId ?? "rest"); setNotice(taskId === null ? "休息を記録しました。ゆっくり休みましょう。" : "取り組むタスクを記録しました。");
@@ -274,6 +285,11 @@ export default function Dashboard({ username, logout }: { username: string; logo
         </View>
       </Pressable>
       <Row>
+        {confirmDelete === task.id ? <>
+          <Button small title="本当に削除" label={`${task.title}を本当に削除`} disabled={busy || isDemo}
+            onPress={() => void run(() => deleteTask(task))} />
+          <Button small title="やめる" disabled={busy} onPress={() => setConfirmDelete(null)} />
+        </> : <>
         {childCount > 0 && <Pressable accessibilityRole="button" accessibilityState={{ expanded: !folded }}
           accessibilityLabel={`${task.title}の子タスクを${folded ? "表示" : "隠す"}`} disabled={busy}
           style={s.treeToggle} onPress={() => setCollapsed(previous => {
@@ -283,7 +299,11 @@ export default function Dashboard({ username, logout }: { username: string; logo
         {childCount === 0 && <Button small title={task.completed ? "戻す" : "✓ 完了"}
           label={`${task.title}を${task.completed ? "未完了に戻す" : "完了にする"}`} disabled={busy}
           onPress={() => void run(() => toggleTask(task))} />}
+        <Button small title="削除" label={`${task.title}を削除`} disabled={busy || isDemo}
+          onPress={() => setConfirmDelete(task.id)} />
+        </>}
       </Row>
+      {confirmDelete === task.id && childCount > 0 && <Hint>中のタスク {descendantIds(tasks, task.id).size}件も削除されます</Hint>}
     </View>;
   }
 

@@ -164,6 +164,27 @@ def update_status(task_id: int, status: TaskStatus, user: User):
         return dict(db.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone())
 
 
+@app.delete("/api/tasks/{task_id}", status_code=204)
+def delete_task(task_id: int, user: User):
+    with storage.database() as db:
+        storage.lock_tasks(db, user["id"])
+        task = db.execute("SELECT parent_id FROM tasks WHERE id=? AND user_id=?", (task_id, user["id"])).fetchone()
+        if not task:
+            raise HTTPException(404, "タスクが見つかりません")
+        children = {}
+        for row in db.execute("SELECT id,parent_id FROM tasks WHERE user_id=?", (user["id"],)):
+            children.setdefault(row["parent_id"], []).append(row["id"])
+        pending, visited = [task_id], set()
+        while pending:
+            current = pending.pop()
+            if current in visited:
+                continue
+            visited.add(current)
+            pending.extend(children.get(current, []))
+            db.execute("DELETE FROM tasks WHERE id=? AND user_id=?", (current, user["id"]))
+        storage.refresh_ancestors(db, user["id"], task["parent_id"])
+
+
 @app.get("/api/condition")
 def get_condition(user: User):
     with storage.database() as db:
