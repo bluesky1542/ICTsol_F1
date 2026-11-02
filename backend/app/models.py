@@ -16,6 +16,7 @@ class TaskInput(BaseModel):
     priority: Level = "medium"
     concentration: Level = "medium"
     place: str = Field(default="", max_length=80)
+    parent_id: int | None = Field(default=None, ge=1)
 
     @field_validator("deadline")
     @classmethod

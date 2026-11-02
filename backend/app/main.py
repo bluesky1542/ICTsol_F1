@@ -77,28 +77,60 @@ def list_tasks(user: User):
 def create_task(task: TaskInput, user: User):
     data = {**task.model_dump(mode="json"), "user_id": user["id"]}
     with storage.database() as db:
-        return dict(db.execute(
-            "INSERT INTO tasks (title,minutes,deadline,priority,concentration,place,user_id) VALUES (:title,:minutes,:deadline,:priority,:concentration,:place,:user_id) RETURNING *", data,
+        storage.lock_tasks(db, user["id"])
+        validate_parent(db, user["id"], task.parent_id)
+        saved = dict(db.execute(
+            "INSERT INTO tasks (title,minutes,deadline,priority,concentration,place,parent_id,user_id) VALUES (:title,:minutes,:deadline,:priority,:concentration,:place,:parent_id,:user_id) RETURNING *", data,
         ).fetchone())
+        storage.refresh_ancestors(db, user["id"], task.parent_id)
+        return saved
+
+
+def validate_parent(db, user_id, parent_id, task_id=None):
+    if parent_id is None:
+        return
+    parents = {row["id"]: row["parent_id"] for row in db.execute(
+        "SELECT id,parent_id FROM tasks WHERE user_id=?", (user_id,))}
+    if parent_id not in parents:
+        raise HTTPException(400, "親タスクが見つかりません")
+    visited = set()
+    while parent_id is not None and parent_id not in visited:
+        if parent_id == task_id:
+            raise HTTPException(400, "自分自身やその下のタスクは親にできません")
+        visited.add(parent_id)
+        parent_id = parents.get(parent_id)
 
 
 @app.put("/api/tasks/{task_id}", response_model=Task)
 def edit_task(task_id: int, task: TaskInput, user: User):
     with storage.database() as db:
-        result = db.execute(
-            "UPDATE tasks SET title=:title,minutes=:minutes,deadline=:deadline,priority=:priority,concentration=:concentration,place=:place WHERE id=:id AND user_id=:user_id",
+        storage.lock_tasks(db, user["id"])
+        previous = db.execute("SELECT parent_id FROM tasks WHERE id=? AND user_id=?", (task_id, user["id"])).fetchone()
+        if not previous:
+            raise HTTPException(404, "タスクが見つかりません")
+        validate_parent(db, user["id"], task.parent_id, task_id)
+        db.execute(
+            "UPDATE tasks SET title=:title,minutes=:minutes,deadline=:deadline,priority=:priority,concentration=:concentration,place=:place,parent_id=:parent_id WHERE id=:id AND user_id=:user_id",
             {**task.model_dump(mode="json"), "id": task_id, "user_id": user["id"]},
         )
-        if not result.rowcount:
-            raise HTTPException(404, "タスクが見つかりません")
+        if previous["parent_id"] != task.parent_id:
+            storage.refresh_ancestors(db, user["id"], previous["parent_id"])
+        storage.refresh_ancestors(db, user["id"], task.parent_id)
         return dict(db.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone())
 
 
 @app.patch("/api/tasks/{task_id}", response_model=Task)
 def update_status(task_id: int, status: TaskStatus, user: User):
     with storage.database() as db:
+        storage.lock_tasks(db, user["id"])
+        task = db.execute("SELECT parent_id FROM tasks WHERE id=? AND user_id=?", (task_id, user["id"])).fetchone()
+        if not task:
+            raise HTTPException(404, "タスクが見つかりません")
+        if db.execute("SELECT 1 FROM tasks WHERE parent_id=? AND user_id=?", (task_id, user["id"])).fetchone():
+            raise HTTPException(400, "子タスクがあるタスクは、子をすべて完了すると自動で完了になります")
         if not db.execute("UPDATE tasks SET completed=? WHERE id=? AND user_id=?", (int(status.completed), task_id, user["id"])).rowcount:
             raise HTTPException(404, "タスクが見つかりません")
+        storage.refresh_ancestors(db, user["id"], task["parent_id"])
         return dict(db.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone())
 
 
@@ -137,7 +169,8 @@ def suggest(context: SuggestionInput, user: User):
     condition = require_current_condition(user)
     calendar_before = get_calendar(user) if context.use_calendar else None
     available = free_minutes(user, context.available_minutes) if context.use_calendar else context.available_minutes
-    candidates = [t for t in storage.tasks(user["id"]) if not t["completed"]
+    all_tasks = storage.tasks(user["id"])
+    candidates = [t for t in all_tasks if not t["completed"]
                   and t["minutes"] <= available
                   and (not t["place"] or t["place"] == context.place)]
     # 入力が肥大化しないよう、締切と優先度順で最大30件を送信する。
@@ -148,7 +181,12 @@ def suggest(context: SuggestionInput, user: User):
     candidates = candidates[:30]
     if not candidates:
         return {"source": "no_candidates", "available_minutes": available, "choices": [], "rest_reason": "今の時間・場所で取り組めるタスクはありません。休息も選べます。"}
-    result = recommendations.generate(candidates, condition["level"], available, context.place, user["id"])
+    titles = {t["id"]: t["title"] for t in all_tasks}
+    parents = {t["parent_id"] for t in all_tasks}
+    ai_tasks = [{**{key: t[key] for key in (
+        "id", "title", "minutes", "deadline", "priority", "concentration", "place", "parent_id")},
+        "parent_title": titles.get(t["parent_id"]), "has_children": t["id"] in parents} for t in candidates]
+    result = recommendations.generate(ai_tasks, condition["level"], available, context.place, user["id"])
     require_current_condition(user)
     # AI処理中に完了・編集されたタスクの古い提案は表示しない。
     current = {t["id"]: t for t in storage.tasks(user["id"])}

@@ -67,6 +67,36 @@ class GeminiTest(unittest.TestCase):
         self.assertIn("comment などの文字列", instructions)
         self.http.assert_called_once_with(timeout=25)
 
+    def test_tree_payload_contains_only_public_fields(self):
+        parent = self.client.post("/api/tasks", json={"title": "親の資料", "minutes": 120}).json()
+        response = self.client.put(f'/api/tasks/{self.task["id"]}', json={
+            "title": self.task["title"], "minutes": 10, "parent_id": parent["id"],
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.suggest().status_code, 200)
+        payload = json.loads(self.post.call_args.kwargs["json"]["contents"][0]["parts"][0]["text"])
+        self.assertEqual(len(payload["tasks"]), 1)
+        child = payload["tasks"][0]
+        self.assertEqual(set(child), {"id", "title", "minutes", "deadline", "priority", "concentration", "place",
+                                      "parent_id", "parent_title", "has_children"})
+        self.assertEqual(child["parent_title"], parent["title"])
+        self.assertFalse(child["has_children"])
+        self.assertEqual(self.client.put(f'/api/tasks/{parent["id"]}', json={"title": parent["title"], "minutes": 10}).status_code, 200)
+        self.assertEqual(self.suggest().status_code, 200)
+        payload = json.loads(self.post.call_args.kwargs["json"]["contents"][0]["parts"][0]["text"])
+        sent_parent = next(task for task in payload["tasks"] if task["id"] == parent["id"])
+        self.assertTrue(sent_parent["has_children"])
+        self.assertIsNone(sent_parent["parent_title"])
+
+    def test_tree_changed_during_ai_is_rejected(self):
+        parent = self.client.post("/api/tasks", json={"title": "親", "minutes": 10}).json()
+        def moved(*args, **kwargs):
+            self.client.put(f'/api/tasks/{self.task["id"]}', json={"title": self.task["title"], "minutes": 10, "parent_id": parent["id"]})
+            return httpx.Response(200, json={"candidates": [{"finishReason": "STOP", "content": {
+                "parts": [{"text": json.dumps(self.result)}]}}]}, request=httpx.Request("POST", "https://generativelanguage.googleapis.com"))
+        self.post.side_effect = moved
+        self.assertEqual(self.suggest().status_code, 409)
+
     def test_survey_history_is_limited_ordered_and_owned(self):
         owner_id = self.client.get("/api/auth/me").json()["id"]
         today = datetime.now(timezone(timedelta(hours=9))).date()

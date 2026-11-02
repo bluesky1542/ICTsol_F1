@@ -6,6 +6,7 @@ import { Achievement, Activity, api, Condition, ConditionLevel, Level, Reflectio
 import CalendarPanel from "./CalendarPanel";
 import TaskDonut from "./TaskDonut";
 import { deadlinePassed } from "./taskStats";
+import { buildTree, descendantIds, type TaskRow } from "./taskTree";
 import { isDemo } from "./demo";
 import { askNotificationPermission, scheduleNotification } from "./notify";
 import { Button, Card, colors, Details, Hint, Input, Label, Row, Stars, Tabs, TimeField, s as ui } from "./ui";
@@ -56,8 +57,8 @@ export default function Dashboard({ username, logout }: { username: string; logo
   const [busy, setBusy] = useState(false);
   const lock = useRef(false);
   const scroll = useRef<ScrollView>(null);
-  // 編集時にフォームまでスクロールするため、やることカードの位置を覚えておく。
-  const taskCardY = useRef(0);
+  // 編集・子の追加時に、スクロール領域からフォームの位置を測る。
+  const taskCard = useRef<View>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [title, setTitle] = useState("");
@@ -68,6 +69,9 @@ export default function Dashboard({ username, logout }: { username: string; logo
   const [concentration, setConcentration] = useState<Level>("medium");
   const [place, setPlace] = useState("");
   const [editing, setEditing] = useState<number | null>(null);
+  const [parentId, setParentId] = useState<number | null>(null);
+  const [parentOpen, setParentOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
   const [available, setAvailable] = useState("30");
   const [currentPlace, setCurrentPlace] = useState("");
   const [suggestions, setSuggestions] = useState<Suggestions | null>(null);
@@ -148,12 +152,21 @@ export default function Dashboard({ username, logout }: { username: string; logo
   function changeTab(next: Tab) { setTab(next); scroll.current?.scrollTo({ y: 0, animated: false }); }
   function resetForm() {
     setEditing(null); setTitle(""); setMinutes("20"); setDeadlineDate(""); setDeadlineTime("");
-    setPriority("medium"); setConcentration("medium"); setPlace("");
+    setPriority("medium"); setConcentration("medium"); setPlace(""); setParentId(null); setParentOpen(false);
+  }
+  function scrollToForm() {
+    const content = scroll.current?.getInnerViewNode();
+    if (content) taskCard.current?.measureLayout(content, (_left, top) => scroll.current?.scrollTo({ y: top, animated: true }));
   }
   function startEdit(task: Task) {
     setEditing(task.id); setTitle(task.title); setMinutes(String(task.minutes)); setDeadlineDate(task.deadline?.slice(0, 10) ?? ""); setDeadlineTime(task.deadline?.slice(11, 16) ?? "");
     setPriority(task.priority); setConcentration(task.concentration); setPlace(task.place);
-    scroll.current?.scrollTo({ y: taskCardY.current, animated: true });
+    setParentId(task.parent_id); setParentOpen(false);
+    scrollToForm();
+  }
+  function startChild(task: Task) {
+    resetForm(); setParentId(task.id);
+    scrollToForm();
   }
   function integer(value: string) {
     if (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 1440) throw new Error("時間は1〜1440分の整数で入力してください。");
@@ -169,15 +182,15 @@ export default function Dashboard({ username, logout }: { username: string; logo
     }
     if (time && !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) throw new Error("締切の時刻は 18:30 のように入力してください。");
     const deadline = date ? (time ? `${date}T${time}` : date) : null;
-    const saved = await api<Task>(editing === null ? "/tasks" : `/tasks/${editing}`, editing === null ? "POST" : "PUT", {
-      title: title.trim(), minutes: integer(minutes), deadline, priority, concentration, place: place.trim(),
+    await api<Task>(editing === null ? "/tasks" : `/tasks/${editing}`, editing === null ? "POST" : "PUT", {
+      title: title.trim(), minutes: integer(minutes), deadline, priority, concentration, place: place.trim(), parent_id: parentId,
     });
-    setTasks(previous => editing === null ? [saved, ...previous] : previous.map(t => t.id === saved.id ? saved : t));
+    setTasks(await api<Task[]>("/tasks"));
     resetForm(); invalidate(); setNotice("タスクを保存しました。");
   }
   async function toggleTask(task: Task) {
-    const saved = await api<Task>(`/tasks/${task.id}`, "PATCH", { completed: !task.completed });
-    setTasks(previous => previous.map(t => t.id === saved.id ? saved : t)); invalidate();
+    await api<Task>(`/tasks/${task.id}`, "PATCH", { completed: !task.completed, parent_id: task.parent_id });
+    setTasks(await api<Task[]>("/tasks")); invalidate();
   }
   async function choose(taskId: number | null) {
     await api<Activity>("/activities", "POST", { task_id: taskId });
@@ -194,9 +207,13 @@ export default function Dashboard({ username, logout }: { username: string; logo
     setReflectionOpen(false);
     setNotice("今日の振り返りを保存しました。おつかれさまでした。");
   }
-  const open = tasks.filter(t => !t.completed)
-    .sort((a, b) => deadlineKey(a.deadline).localeCompare(deadlineKey(b.deadline)));
+  const compare = (first: Task, second: Task) => deadlineKey(first.deadline).localeCompare(deadlineKey(second.deadline));
+  const open = tasks.filter(t => !t.completed);
   const done = tasks.filter(t => t.completed);
+  const tree = buildTree(tasks, compare), counts = new Map(tree.map(row => [row.task.id, row]));
+  const hiddenIds = new Set([...collapsed].flatMap(id => [...descendantIds(tasks, id)]));
+  const excluded = new Set(editing === null ? [] : [editing, ...descendantIds(tasks, editing)]);
+  const parent = tasks.find(task => task.id === parentId);
   const places = [...new Set(tasks.map(t => t.place.trim()).filter(Boolean))];
   const aiBlocked = !connected ? "サーバーに接続できていません。↻で再読み込みしてください。"
     : !aiConfigured ? "AI提案は準備中です。"
@@ -216,10 +233,14 @@ export default function Dashboard({ username, logout }: { username: string; logo
   }
 
   // 描画のたびに部品を作り直さないよう、関数として呼び出す。
-  function taskRow(task: Task) {
+  function taskRow({ task, depth }: TaskRow) {
+    if (hiddenIds.has(task.id)) return null;
+    const { childCount, doneChildCount } = counts.get(task.id)!;
+    const folded = collapsed.has(task.id);
+    const missingParent = depth === 0 ? tasks.find(parent => parent.id === task.parent_id) : null;
     const meta = [`${task.minutes}分`, task.place].filter(Boolean).join(" · ");
     const due = task.deadline && !task.completed ? deadlineLabel(task.deadline, now) : null;
-    return <View key={task.id} style={s.taskRow}>
+    return <View key={task.id} style={[s.taskRow, { marginLeft: Math.min(depth, 4) * 16 }]}>
       <Pressable accessibilityRole="button" accessibilityLabel={`${task.title}を編集`} disabled={busy}
         onPress={() => startEdit(task)} style={s.taskBody}>
         <Text style={[s.taskTitle, task.completed && s.done]}>{task.title}</Text>
@@ -227,14 +248,23 @@ export default function Dashboard({ username, logout }: { username: string; logo
           {due && <Text style={[s.due, due[1] === "over" ? s.dueOver : due[1] === "soon" ? s.dueSoon : null]}>{due[0]}</Text>}
           {task.completed && !!task.deadline && <Text style={ui.hint}>締切 {shortDate(task.deadline)}{task.deadline.slice(10).replace("T", " ")}</Text>}
           <Text style={ui.hint}>{meta}</Text>
+          {missingParent && <Text style={ui.hint}>↳ {missingParent.title}</Text>}
           {task.priority === "high" && <Text style={s.badge}>優先</Text>}
           {task.concentration === "high" && <Text style={s.badge}>集中</Text>}
+          {childCount > 0 && <Text style={s.badge}>子 {doneChildCount}/{childCount}完了</Text>}
         </View>
       </Pressable>
-      {/* 完了は言葉のボタンで明示する。完了済みは「戻す」で未完了に戻せる */}
-      <Button small title={task.completed ? "戻す" : "✓ 完了"}
-        label={`${task.title}を${task.completed ? "未完了に戻す" : "完了にする"}`} disabled={busy}
-        onPress={() => void run(() => toggleTask(task))} />
+      <Row>
+        {childCount > 0 && <Pressable accessibilityRole="button" accessibilityState={{ expanded: !folded }}
+          accessibilityLabel={`${task.title}の子タスクを${folded ? "表示" : "隠す"}`} disabled={busy}
+          style={s.treeToggle} onPress={() => setCollapsed(previous => {
+            const next = new Set(previous); if (next.has(task.id)) next.delete(task.id); else next.add(task.id); return next;
+          })}><Text style={s.taskTitle}>{folded ? "▸" : "▾"}</Text></Pressable>}
+        <Button small title="＋子" label={`${task.title}に子タスクを追加`} disabled={busy} onPress={() => startChild(task)} />
+        {childCount === 0 && <Button small title={task.completed ? "戻す" : "✓ 完了"}
+          label={`${task.title}を${task.completed ? "未完了に戻す" : "完了にする"}`} disabled={busy}
+          onPress={() => void run(() => toggleTask(task))} />}
+      </Row>
     </View>;
   }
 
@@ -327,10 +357,26 @@ export default function Dashboard({ username, logout }: { username: string; logo
           </Card>
         </View>
         {/* 右（スマホでは下）：やること */}
-        <View style={[s.stack, wide && s.column]}>
+        <View ref={taskCard} style={[s.stack, wide && s.column]}>
           {/* やること：追加・編集フォームと一覧を1枚にまとめる */}
-          <View onLayout={e => { taskCardY.current = e.nativeEvent.layout.y; }}>
+          <View>
           <Card title={editing === null ? `やること ${open.length}件` : "タスクを編集"}>
+            {editing === null && parent && <Label>「{parent.title}」の下に追加</Label>}
+            <Hint>親：{parent?.title ?? (parentId === null ? "なし（最上位）" : "見つからないタスク")}</Hint>
+            <Row>
+              {parentId !== null && <Button small title="外す" label="親タスクを外す" disabled={busy} onPress={() => setParentId(null)} />}
+              <Button small title="親を変更" disabled={busy} onPress={() => setParentOpen(value => !value)} />
+            </Row>
+            <Details title="親タスクの候補" open={parentOpen} onToggle={setParentOpen}>
+              <Button small title="なし（最上位）" selected={parentId === null} disabled={busy}
+                onPress={() => { setParentId(null); setParentOpen(false); }} />
+              {tree.filter(row => !excluded.has(row.task.id)).map(({ task, depth }) =>
+                <View key={task.id} style={{ marginLeft: Math.min(depth, 4) * 16 }}>
+                  <Button small title={`${task.title}${task.completed ? "（完了済み）" : ""}`} selected={parentId === task.id}
+                    disabled={busy} onPress={() => { setParentId(task.id); setParentOpen(false); }} />
+                </View>)}
+            </Details>
+            {parent?.completed && <Hint>未完了の子タスクを追加・移動すると、親も未完了に戻ります。</Hint>}
             <Input label="タスク名" hideLabel value={title} set={setTitle} placeholder="タスク名（例：レポートの下書き）" disabled={busy} />
             <Label>かかる時間</Label>
             <Row>
@@ -353,11 +399,12 @@ export default function Dashboard({ username, logout }: { username: string; logo
               {editing !== null && <Button title="やめる" disabled={busy} onPress={resetForm} />}</Row>
             {!tasks.length && <Hint>まだタスクがありません。上の欄から追加しましょう。</Hint>}
             <TaskDonut tasks={tasks} now={now} />
-            {open.map(taskRow)}
+            {buildTree(open, compare).map(taskRow)}
             {!!done.length && <Details title={`完了済み（${done.length}件）`}>
-              {done.map(taskRow)}
+              {buildTree(done, compare).map(taskRow)}
             </Details>}
             {!!tasks.length && <Hint>タスク名を押すと編集できます</Hint>}
+            {tree.some(row => row.childCount > 0) && <Hint>子をすべて完了すると自動で完了します</Hint>}
           </Card>
           </View>
         </View>
@@ -413,8 +460,9 @@ const s = StyleSheet.create({
   wideWidth: { maxWidth: 1200 }, hidden: { display: "none" },
   error: { padding: 12, backgroundColor: "#fff0ed", color: "#9a2920", borderRadius: 10 },
   notice: { padding: 12, backgroundColor: "#deeee4", color: "#234e3d", borderRadius: 10 },
-  taskRow: { flexDirection: "row", alignItems: "center", gap: 6, borderTopWidth: 1, borderColor: colors.line, paddingVertical: 4 },
-  taskBody: { flex: 1, minHeight: 44, justifyContent: "center", gap: 2, paddingVertical: 6 },
+  taskRow: { gap: 6, borderTopWidth: 1, borderColor: colors.line, paddingVertical: 8 },
+  treeToggle: { minWidth: 44, minHeight: 44, alignItems: "center", justifyContent: "center" },
+  taskBody: { minWidth: 0, minHeight: 44, justifyContent: "center", gap: 2, paddingVertical: 6 },
   taskTitle: { fontSize: 16, color: "#243e33", fontWeight: "600" }, done: { textDecorationLine: "line-through", color: "#738179" },
   metaRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6 },
   badge: { fontSize: 11, fontWeight: "700", color: colors.primary, backgroundColor: colors.soft, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, overflow: "hidden" },

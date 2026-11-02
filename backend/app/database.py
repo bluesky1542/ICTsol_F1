@@ -45,6 +45,28 @@ def lock_auth(db):
         db.execute("BEGIN IMMEDIATE")
 
 
+def lock_tasks(db, user_id):
+    if isinstance(db, PostgresDatabase):
+        db.execute("SELECT pg_advisory_xact_lock(73120403, ?)", (user_id,))
+    else:
+        db.execute("BEGIN IMMEDIATE")
+
+
+def refresh_ancestors(db, user_id, parent_id):
+    # 指定した親から上へ再計算する。子がなくなった親は直前の完了状態を保つ。
+    visited = set()
+    while parent_id is not None and parent_id not in visited:
+        visited.add(parent_id)
+        parent = db.execute("SELECT parent_id FROM tasks WHERE id=? AND user_id=?", (parent_id, user_id)).fetchone()
+        if not parent:
+            break
+        children = db.execute("SELECT completed FROM tasks WHERE parent_id=? AND user_id=?", (parent_id, user_id)).fetchall()
+        if children:
+            db.execute("UPDATE tasks SET completed=? WHERE id=? AND user_id=?",
+                       (int(all(child["completed"] for child in children)), parent_id, user_id))
+        parent_id = parent["parent_id"]
+
+
 @contextmanager
 def database():
     url = os.getenv("DATABASE_URL", "").strip()
@@ -98,6 +120,11 @@ def initialize():
             db.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS user_id INTEGER")
         elif "user_id" not in {row[1] for row in db.execute("PRAGMA table_info(tasks)")}:
             db.execute("ALTER TABLE tasks ADD COLUMN user_id INTEGER")
+        if postgres:
+            db.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS parent_id INTEGER")
+        elif "parent_id" not in {row[1] for row in db.execute("PRAGMA table_info(tasks)")}:
+            db.execute("ALTER TABLE tasks ADD COLUMN parent_id INTEGER")
+        db.execute("CREATE INDEX IF NOT EXISTS tasks_parent ON tasks(user_id, parent_id)")
         schema = """
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL
