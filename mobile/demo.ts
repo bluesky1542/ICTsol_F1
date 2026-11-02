@@ -8,6 +8,8 @@ const tasks: Task[] = [
   { id: 1, title: "レポートの見出しを考える", minutes: 15, deadline: null, priority: "high", concentration: "medium", place: "", completed: false },
   { id: 2, title: "机の上を片づける", minutes: 10, deadline: null, priority: "low", concentration: "low", place: "自宅", completed: false },
   { id: 3, title: "チームの発表資料を確認する", minutes: 30, deadline: null, priority: "medium", concentration: "high", place: "", completed: false },
+  { id: 4, title: "今日の予定を確認する", minutes: 5, deadline: null, priority: "medium", concentration: "low", place: "", completed: true },
+  { id: 5, title: "資料を共有フォルダにまとめる", minutes: 10, deadline: null, priority: "low", concentration: "low", place: "", completed: true },
 ];
 
 // 閲覧用データだけを返し、サーバーへの通信や保存は行わない。

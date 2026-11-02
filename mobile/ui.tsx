@@ -4,7 +4,7 @@ import { Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-na
 // 画面全体で使う色。既存の緑系の配色に合わせる。
 export const colors = {
   background: "#f1f5f4", ink: "#183c32", text: "#344d43", muted: "#52645e",
-  primary: "#24654c", border: "#b9cec4", soft: "#eef6f1", line: "#e5ece8",
+  primary: "#24654c", border: "#b9cec4", soft: "#eef6f1", line: "#e5ece8", taskOpen: "#cfdcd6",
 };
 
 export function Button({ title, onPress, disabled = false, selected = false, primary = false, small = false, label }: {

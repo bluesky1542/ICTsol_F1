@@ -4,11 +4,13 @@ import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { Achievement, Activity, api, Condition, ConditionLevel, Level, Reflection, Suggestions, Task, WorkPlan } from "./api";
 import CalendarPanel from "./CalendarPanel";
+import TaskDonut from "./TaskDonut";
+import { deadlinePassed } from "./taskStats";
 import { isDemo } from "./demo";
 import { askNotificationPermission, scheduleNotification } from "./notify";
 import { Button, Card, colors, Details, Hint, Input, Label, Row, Stars, Tabs, TimeField, s as ui } from "./ui";
 
-type Tab = "now" | "calendar";
+type Tab = "now" | "stats" | "calendar";
 const levels: [Level, string][] = [["low", "低"], ["medium", "中"], ["high", "高"]];
 const conditions: [ConditionLevel, string][] = [
   ["slightly_tired", "少し疲れてる"],
@@ -38,7 +40,7 @@ function deadlineLabel(deadline: string, now: number): [string, "over" | "soon" 
   const days = Math.round((Date.parse(day) - Date.parse(japanToday(now))) / 86400000);
   const weekday = "日月火水木金土"[new Date(`${day}T00:00:00Z`).getUTCDay()];
   const at = time ? ` ${time}` : "";
-  const passed = time ? now >= Date.parse(`${day}T${time}:00+09:00`) : days < 0;
+  const passed = deadlinePassed(deadline, now);
   if (passed) return [`${shortDate(day)}${at} 締切切れ`, "over"];
   if (days === 0) return [`今日${at}まで`, "soon"];
   if (days === 1) return [`明日${at}まで`, "soon"];
@@ -247,7 +249,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
           onPress={() => void run(async () => { await refresh(); setCalendarReload(n => n + 1); })} />
         <Button small title="ログアウト" disabled={busy} onPress={() => void run(logout)} />
       </View>
-      <Tabs tabs={[["now", "ホーム"], ["calendar", "カレンダー"]]}
+      <Tabs tabs={[["now", "ホーム"], ["stats", "ダッシュボード"], ["calendar", "カレンダー"]]}
         value={tab} set={changeTab} />
       {isDemo && <Hint>デモ画面です（保存・AIは動きません）</Hint>}
       {!!error && <Text accessibilityRole="alert" style={s.error}>{error}</Text>}
@@ -358,6 +360,10 @@ export default function Dashboard({ username, logout }: { username: string; logo
           </Card>
           </View>
         </View>
+      </View>
+
+      <View style={[s.stack, hidden("stats")]}>
+        <TaskDonut tasks={tasks} now={now} />
       </View>
 
       {/* 予定：常に読み込んだままにし、連携状態をホームでも使う */}
