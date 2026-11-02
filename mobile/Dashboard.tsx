@@ -100,7 +100,10 @@ export default function Dashboard({ username, logout }: { username: string; logo
   const scrollBox = useRef<View>(null);
   const tasksRef = useRef<Task[]>([]);
   // 移動の直後だけ出す「元に戻す」。
-  const [undo, setUndo] = useState<{ text: string; taskId: number; parent_id: number | null; group_id: number | null } | null>(null);
+  // createdId は、名前で親を決めたときに新しく作った見出し（元に戻すときに空なら消す）。
+  const [undo, setUndo] = useState<{ text: string; taskId: number; parent_id: number | null; group_id: number | null; createdId?: number } | null>(null);
+  // 「親を変更」で入力中の親の名前。
+  const [parentName, setParentName] = useState("");
   const [calendarLinked, setCalendarLinked] = useState(false);
   const [calendarReload, setCalendarReload] = useState(0);
   const [useCalendar, setUseCalendar] = useState(true);
@@ -273,7 +276,39 @@ export default function Dashboard({ username, logout }: { username: string; logo
     const task = tasks.find(value => value.id === saved.taskId);
     if (!task) throw new Error("移したタスクが見つかりません。");
     await putPlace(task, { parent_id: saved.parent_id, group_id: saved.group_id });
-    setTasks(await api<Task[]>("/tasks")); invalidate(); setNotice("元に戻しました。");
+    let nextTasks = await api<Task[]>("/tasks");
+    // 名前を入れて作った見出しが空になったら、一緒に消して元どおりにする。
+    if (saved.createdId !== undefined && !nextTasks.some(value => value.parent_id === saved.createdId)) {
+      await api(`/tasks/${saved.createdId}`, "DELETE");
+      nextTasks = await api<Task[]>("/tasks");
+    }
+    setTasks(nextTasks); invalidate(); setNotice("元に戻しました。");
+  }
+  // 入力した名前の見出しの下に入れる。同じ名前がなければ、その名前の見出しを新しく作る。
+  function nameMatch(task: Task, name: string) {
+    const inside = descendantIds(tasks, task.id);
+    const candidates = tasks.filter(value => value.id !== task.id && !inside.has(value.id) && value.title.trim() === name);
+    // 同じ名前が複数あるときは、見出し（子を持つもの）→ 未完了 の順で選ぶ。
+    const score = (value: Task) => (tasks.some(child => child.parent_id === value.id) ? 0 : 2) + (value.completed ? 1 : 0);
+    return candidates.sort((first, second) => score(first) - score(second))[0] ?? null;
+  }
+  async function moveByName(task: Task, text: string) {
+    const name = text.trim();
+    if (!name) throw new Error("親の名前を入力してください。");
+    const found = nameMatch(task, name);
+    if (found) {
+      const change = dropChange(tasks, task.id, { kind: "task", id: found.id });
+      if (!change) throw new Error(`もう「${name}」の下に入っています。`);
+      await moveTask(task, { kind: "task", id: found.id }, change);
+      return;
+    }
+    // 見出しは題名だけを使う（時間などは表示しない）。グループは今のタスクに合わせる。
+    const heading = await api<Task>("/tasks", "POST", { title: name, minutes: 1, deadline: null, priority: "medium",
+      concentration: "medium", place: "", parent_id: null, group_id: task.group_id });
+    await putPlace(task, { parent_id: heading.id, group_id: heading.group_id });
+    setTasks(await api<Task[]>("/tasks")); invalidate(); setMoving(null);
+    setUndo({ text: `見出し「${name}」を作って「${task.title}」を入れました。`, taskId: task.id,
+      parent_id: task.parent_id, group_id: task.group_id, createdId: heading.id });
   }
   // 落とし先として登録する（一覧の行・グループ見出し・先頭の帯）。
   const dropArea = (key: string, target: DropTarget) => (view: View | null) => {
@@ -407,8 +442,19 @@ export default function Dashboard({ username, logout }: { username: string; logo
       if (change) void run(() => moveTask(task, target, change));
     };
     const inside = descendantIds(tasks, task.id);
+    const name = parentName.trim(), found = name ? nameMatch(task, name) : null;
+    // 入力中の文字を含む既存の名前を候補に出す（同じ名前は1つにまとめる）。
+    const suggestions = name ? [...new Set(tasks.filter(value => value.id !== task.id && !inside.has(value.id)
+      && value.title.includes(name) && value.title.trim() !== name).map(value => value.title.trim()))].slice(0, 5) : [];
     return <View style={s.picker}>
-      <Hint>「{task.title}」をどこに入れる？（中のタスクも一緒に移ります）</Hint>
+      <Hint>「{task.title}」を入れる親（見出し）の名前を決めてください。中のタスクも一緒に移ります。</Hint>
+      <Row>
+        <View style={s.nameInput}><Input label="親の名前" hideLabel value={parentName} set={setParentName} placeholder="例：レポート課題" disabled={busy} maxLength={120} /></View>
+        <Button small primary title="決定" disabled={busy || !name} onPress={() => void run(() => moveByName(task, parentName))} />
+      </Row>
+      {!!name && <Hint>{found ? `「${found.title}」の下に入れます` : `新しい見出し「${name}」を作って入れます`}</Hint>}
+      {!!suggestions.length && <Row>{suggestions.map(value => <Button key={value} small title={value} disabled={busy} onPress={() => setParentName(value)} />)}</Row>}
+      <Label>または一覧から選ぶ</Label>
       <ScrollView style={s.pickerList} contentContainerStyle={{ gap: 6 }} nestedScrollEnabled>
         <Row>{roots.map(target => <Button key={String(target.kind === "root" ? target.groupId : "")} small
           title={target.kind === "root" && target.name ? `最上位（${target.name}）` : "なし（最上位）"}
@@ -471,7 +517,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
           label={`${task.title}を${task.completed ? "未完了に戻す" : "完了にする"}`} disabled={busy}
           onPress={() => void run(() => toggleTask(task))} />}
         <Button small title={moving === task.id ? "▾ 親を変更" : "親を変更"} label={`${task.title}の親を変更`} selected={moving === task.id}
-          disabled={busy || isDemo} onPress={() => { setMoving(moving === task.id ? null : task.id); setConfirmDelete(null); }} />
+          disabled={busy || isDemo} onPress={() => { setMoving(moving === task.id ? null : task.id); setConfirmDelete(null); setParentName(""); }} />
         <Button small title="削除" label={`${task.title}を削除`} disabled={busy || isDemo}
           onPress={() => { setConfirmDelete(task.id); setMoving(null); }} />
         </>}
@@ -750,6 +796,7 @@ const s = StyleSheet.create({
   scrollBox: { flex: 1 },
   picker: { gap: 8, padding: 12, borderRadius: 10, backgroundColor: colors.soft },
   pickerList: { maxHeight: 260 },
+  nameInput: { flex: 1, minWidth: 160 },
   dropHover: { borderColor: colors.primary, borderWidth: 2, backgroundColor: colors.soft, borderRadius: 10 },
   dragging: { opacity: 0.4 },
   dropHeader: { paddingVertical: 4, paddingHorizontal: 4 },
