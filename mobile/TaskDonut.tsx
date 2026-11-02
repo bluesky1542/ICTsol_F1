@@ -34,7 +34,7 @@ export default function TaskDonut({ tasks, now }: { tasks: Task[]; now: number }
 }
 
 const s = StyleSheet.create({
-  summary: { flexDirection: "row", alignItems: "center", gap: 14, paddingVertical: 12, borderTopWidth: 1, borderBottomWidth: 1, borderColor: colors.line },
+  summary: { flexDirection: "row", alignItems: "center", gap: 14, paddingVertical: 12, borderTopWidth: 1, borderColor: colors.line },
   chart: { width: 72, height: 72, flexShrink: 0 },
   center: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, alignItems: "center", justifyContent: "center" },
   rate: { fontSize: 16, fontWeight: "700", color: colors.ink },
