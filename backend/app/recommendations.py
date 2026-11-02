@@ -148,7 +148,7 @@ def recent_history(user_id: int) -> tuple[list[dict], list[dict]]:
 
 def generate(candidates: list[dict], condition: str, minutes: int, place: str, user_id: int) -> AIResult:
     key = os.getenv("GEMINI_API_KEY", "").strip()
-    model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite").strip()
+    model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite").strip()
     if not key or not model:
         raise HTTPException(503, "AI提案は準備中です。管理者による設定をお待ちください。")
     reserve_ai_call(user_id)

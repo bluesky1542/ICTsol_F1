@@ -151,13 +151,13 @@ SDK 57の `expo-calendar` は[公式案内](https://docs.expo.dev/versions/v57.0
 
 ```dotenv
 GEMINI_API_KEY=自分のAPIキー
-GEMINI_MODEL=gemini-2.5-flash-lite
+GEMINI_MODEL=gemini-3.5-flash-lite
 ```
 
 3. バックエンドを再起動し、画面右上の「↻」を押す。
 4. 「ホーム」タブの「やること」でタスクを登録し、今の調子・使える時間・場所を選んで「提案してもらう」を押す。
 
-2026-10-26確認時点で`gemini-2.5-flash-lite`の標準テキスト入出力には無料枠があります。対象モデル・利用上限は変更されるため、[公式料金表](https://ai.google.dev/gemini-api/docs/pricing)と[AI Studioの利用上限](https://aistudio.google.com/usage?tab=rate-limit)を確認してください。アプリからはFree Tierか有料プロジェクトかを判定できません。
+2026-11-02確認時点で`gemini-3.5-flash-lite`の標準テキスト入出力には無料枠があります。対象モデル・利用上限は変更されるため、[公式料金表](https://ai.google.dev/gemini-api/docs/pricing)と[AI Studioの利用上限](https://aistudio.google.com/usage?tab=rate-limit)を確認してください。アプリからはFree Tierか有料プロジェクトかを判定できません。
 
 クレジットカード（請求先アカウント）は登録しないでください。Google AI Studio / Google Cloud で課金（Billing）を有効にしなければ有料枠に切り替わらず、料金は発生しません。課金を有効にした場合は料金が発生する可能性があります。
 

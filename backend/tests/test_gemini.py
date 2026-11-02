@@ -17,7 +17,7 @@ class GeminiTest(unittest.TestCase):
         folder = self.enterContext(tempfile.TemporaryDirectory())
         self.enterContext(patch.dict(os.environ, {
             "REQUIRE_DATABASE_URL": "0", "DATABASE_URL": "", "DATABASE_PATH": folder + "/test.sqlite3",
-            "GEMINI_API_KEY": "test-secret", "GEMINI_MODEL": "gemini-2.5-flash-lite",
+            "GEMINI_API_KEY": "test-secret", "GEMINI_MODEL": "gemini-3.5-flash-lite",
             "AI_USER_MINUTE_LIMIT": "100",
             "AI_USER_DAILY_LIMIT": "100", "AI_GLOBAL_DAILY_LIMIT": "100", "AI_GLOBAL_MONTHLY_LIMIT": "1000",
         }))
@@ -39,13 +39,22 @@ class GeminiTest(unittest.TestCase):
     def suggest(self):
         return self.client.post("/api/recommendations", json={"available_minutes": 30})
 
+    def test_thought_parts_are_ignored(self):
+        self.respond(body={"candidates": [{"finishReason": "STOP", "content": {"parts": [
+            {"thought": True, "text": "これは本文ではありません"},
+            {"text": json.dumps(self.result)},
+        ]}}]})
+        response = self.suggest()
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["choices"][0]["reason"], "短時間で取り組めます")
+
     def test_configuration_and_success(self):
         self.assertEqual(self.client.get("/api/config").json(), {"ai_configured": True})
         response = self.suggest()
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["choices"][0]["task"]["id"], self.task["id"])
         request = self.post.call_args
-        self.assertEqual(request.args[0], "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent")
+        self.assertEqual(request.args[0], "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent")
         self.assertEqual(request.kwargs["headers"], {"x-goog-api-key": "test-secret"})
         body = request.kwargs["json"]
         payload = json.loads(body["contents"][0]["parts"][0]["text"])

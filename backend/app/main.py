@@ -64,7 +64,7 @@ def hello() -> dict[str, str]:
 @app.get("/api/config")
 def config(user: User):
     key = os.getenv("GEMINI_API_KEY", "").strip()
-    model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite").strip()
+    model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite").strip()
     return {"ai_configured": bool(key and model)}
 
 
