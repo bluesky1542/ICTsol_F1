@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { Animated, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
+import { Animated, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View, type ViewStyle } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { Achievement, Activity, ActivityAction, api, Condition, ConditionLevel, Level, Reflection, Suggestions, Task, TaskGroup, WorkPlan } from "./api";
 import CalendarPanel from "./CalendarPanel";
 import FocusCard from "./FocusCard";
+import { dropChange, dropLabel, findDropArea, type DropArea, type DropTarget } from "./dragDrop";
 import { todayLog } from "./activityLog";
 import TaskDonut from "./TaskDonut";
 import TaskGroupPanel, { GroupChips } from "./TaskGroupPanel";
@@ -88,6 +89,16 @@ export default function Dashboard({ username, logout }: { username: string; logo
   const [activities, setActivities] = useState<Activity[]>([]);
   // 「休む」を押したあと、休憩時間を選んでいる間だけ true。
   const [restOpen, setRestOpen] = useState(false);
+  // ドラッグで親を変える。落とし先の部品と、ドラッグ中の位置・候補を覚える。
+  const dropViews = useRef(new Map<string, { view: View; target: DropTarget }>());
+  const dragging = useRef<{ taskId: number; areas: DropArea[]; scrollAt: number; captured: boolean; y: number; top: number; bottom: number } | null>(null);
+  const [drag, setDrag] = useState<{ task: Task; key: string | null; label: string | null } | null>(null);
+  const ghostY = useRef(new Animated.Value(0)).current;
+  const scrollY = useRef(0);
+  const scrollBox = useRef<View>(null);
+  const tasksRef = useRef<Task[]>([]);
+  // 移動の直後だけ出す「元に戻す」。
+  const [undo, setUndo] = useState<{ text: string; taskId: number; parent_id: number | null; group_id: number | null } | null>(null);
   const [calendarLinked, setCalendarLinked] = useState(false);
   const [calendarReload, setCalendarReload] = useState(0);
   const [useCalendar, setUseCalendar] = useState(true);
@@ -136,6 +147,26 @@ export default function Dashboard({ username, logout }: { username: string; logo
     return scheduleNotification(dueAt, "今日の振り返りの時間です", "おつかれさまでした。3つの質問に答えて1日を締めくくりましょう。",
       () => { setNow(Date.now()); changeTab("now"); });
   }, [dueAt, !!todayReflection]);
+  tasksRef.current = tasks;
+  // ドラッグ中に画面の上端・下端へ寄せたら自動でスクロールする。
+  useEffect(() => {
+    if (!drag) return;
+    const frame = requestAnimationFrame(measureDrop);
+    const timer = setInterval(() => {
+      const state = dragging.current;
+      if (!state) return;
+      const delta = state.y < state.top + 60 ? -12 : state.y > state.bottom - 60 ? 12 : 0;
+      if (!delta) return;
+      scroll.current?.scrollTo({ y: Math.max(0, scrollY.current + delta), animated: false });
+      showHover();
+    }, 30);
+    return () => { cancelAnimationFrame(frame); clearInterval(timer); };
+  }, [drag?.task.id]);
+  useEffect(() => {
+    if (!undo) return;
+    const timer = setTimeout(() => setUndo(null), 10000);
+    return () => clearTimeout(timer);
+  }, [undo]);
   // 取り組みの予定時刻になったらブラウザで知らせる（延長したら付け直す）。
   useEffect(() => {
     if (!activity?.ends_at) return;
@@ -151,7 +182,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
 
   async function run(work: () => Promise<void>) {
     if (lock.current) return;
-    lock.current = true; setBusy(true); setError(""); setNotice("");
+    lock.current = true; setBusy(true); setError(""); setNotice(""); setUndo(null);
     try { await work(); } catch (e) {
       setError(e instanceof Error ? e.message : "通信できませんでした。");
     }
@@ -221,6 +252,74 @@ export default function Dashboard({ username, logout }: { username: string; logo
   async function toggleTask(task: Task) {
     await api<Task>(`/tasks/${task.id}`, "PATCH", { completed: !task.completed });
     setTasks(await api<Task[]>("/tasks")); invalidate();
+  }
+  // 親・グループだけを変えて保存する（他の項目は今の値のまま送る）。
+  async function putPlace(task: Task, change: { parent_id: number | null; group_id: number | null }) {
+    await api<Task>(`/tasks/${task.id}`, "PUT", { title: task.title, minutes: task.minutes, deadline: task.deadline, priority: task.priority,
+      concentration: task.concentration, place: task.place, ...change });
+  }
+  async function moveTask(task: Task, target: DropTarget, change: { parent_id: number | null; group_id: number | null }) {
+    await putPlace(task, change);
+    setTasks(await api<Task[]>("/tasks")); invalidate();
+    const place = target.kind === "task" ? `「${tasks.find(value => value.id === target.id)?.title ?? "タスク"}」の下`
+      : target.name ? `「${target.name}」の最上位` : "最上位";
+    setUndo({ text: `「${task.title}」を${place}に移しました。`, taskId: task.id,
+      parent_id: task.parent_id, group_id: task.group_id });
+  }
+  async function undoMove(saved: NonNullable<typeof undo>) {
+    const task = tasks.find(value => value.id === saved.taskId);
+    if (!task) throw new Error("移したタスクが見つかりません。");
+    await putPlace(task, { parent_id: saved.parent_id, group_id: saved.group_id });
+    setTasks(await api<Task[]>("/tasks")); invalidate(); setNotice("元に戻しました。");
+  }
+  // 落とし先として登録する（一覧の行・グループ見出し・先頭の帯）。
+  const dropArea = (key: string, target: DropTarget) => (view: View | null) => {
+    if (view) dropViews.current.set(key, { view, target }); else dropViews.current.delete(key);
+  };
+  // 長押しで持ち上げる。落とし先の画面上の位置をまとめて測っておく。
+  function startDrag(task: Task, pageY: number) {
+    if (busy || isDemo || task.completed) return;
+    const state = { taskId: task.id, areas: [] as DropArea[], scrollAt: scrollY.current, captured: false, y: pageY, top: 0, bottom: screenHeight };
+    dragging.current = state;
+    ghostY.setValue(pageY - 30);
+    setDrag({ task, key: null, label: null });
+  }
+  // 持ち上げると先頭の帯が出て一覧がずれるため、表示が変わったあとで落とし先の位置を測る。
+  function measureDrop() {
+    const state = dragging.current;
+    if (!state) return;
+    const areas: DropArea[] = [];
+    state.areas = areas; state.scrollAt = scrollY.current;
+    for (const [key, { view, target }] of dropViews.current) {
+      view.measureInWindow((_x, top, _width, height) => { areas.push({ key, target, top, height }); showHover(); });
+    }
+    scrollBox.current?.measureInWindow((_x, top, _width, height) => { state.top = top; state.bottom = top + height; });
+  }
+  // 今の指の位置から落とし先を決める（スクロールした分だけ位置をずらす）。
+  function hoverDrop() {
+    const state = dragging.current;
+    if (!state) return null;
+    const shift = scrollY.current - state.scrollAt;
+    const area = findDropArea(state.areas.map(value => ({ ...value, top: value.top - shift })), state.y);
+    const change = area ? dropChange(tasksRef.current, state.taskId, area.target) : null;
+    return area && change ? { area, change } : null;
+  }
+  function showHover() {
+    const hover = hoverDrop();
+    setDrag(value => value && { ...value, key: hover?.area.key ?? null, label: hover ? dropLabel(tasksRef.current, hover.area.target) : null });
+  }
+  function moveDrag(pageY: number) {
+    const state = dragging.current;
+    if (!state) return;
+    state.y = pageY; state.captured = true;
+    ghostY.setValue(pageY - 30);
+    showHover();
+  }
+  function endDrag(drop: boolean) {
+    const hover = drop ? hoverDrop() : null;
+    const task = tasksRef.current.find(value => value.id === dragging.current?.taskId);
+    dragging.current = null; setDrag(null);
+    if (hover && task) void run(() => moveTask(task, hover.area.target, hover.change));
   }
   async function deleteTask(task: Task) {
     const removed = new Set([task.id, ...descendantIds(tasks, task.id)]);
@@ -296,7 +395,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
   }
 
   // 描画のたびに部品を作り直さないよう、関数として呼び出す。
-  function taskRow({ task, depth }: TaskRow) {
+  function taskRow({ task, depth }: TaskRow, draggable = false) {
     if (hiddenIds.has(task.id)) return null;
     const { childCount, doneChildCount } = counts.get(task.id)!;
     const summary = childCount > 0 ? descendantSummary(tasks, task.id) : null;
@@ -304,9 +403,15 @@ export default function Dashboard({ username, logout }: { username: string; logo
     const missingParent = depth === 0 ? tasks.find(parent => parent.id === task.parent_id) : null;
     const meta = [`${task.minutes}分`, task.place].filter(Boolean).join(" · ");
     const due = !summary && task.deadline && !task.completed ? deadlineLabel(task.deadline, now) : null;
-    return <View key={task.id} style={[s.taskRow, { marginLeft: Math.min(depth, 4) * 16 }]}>
+    return <View key={task.id} ref={draggable ? dropArea(`task:${task.id}`, { kind: "task", id: task.id }) : undefined}
+      style={[s.taskRow, { marginLeft: Math.min(depth, 4) * 16 }, drag?.key === `task:${task.id}` && s.dropHover, drag?.task.id === task.id && s.dragging]}>
       <Pressable accessibilityRole="button" accessibilityLabel={`${task.title}を編集`} disabled={busy}
-        onPress={() => startEdit(task)} style={s.taskBody}>
+        accessibilityHint={draggable && !isDemo ? "長押ししてドラッグすると親を変更できます" : undefined}
+        onPress={() => startEdit(task)} delayLongPress={300}
+        onLongPress={draggable ? event => startDrag(task, event.nativeEvent.pageY) : undefined}
+        // 長押しのあと動かさずに離したら、ドラッグをやめる。
+        onPressOut={() => setTimeout(() => { if (dragging.current && !dragging.current.captured) endDrag(false); }, 50)}
+        style={[s.taskBody, Platform.OS === "web" && draggable && noSelect]}>
         <Text style={[s.taskTitle, summary && s.headingTitle, task.completed && s.done]}>{task.title}</Text>
         <View style={s.metaRow}>
           {due && <Text style={[s.due, due[1] === "over" ? s.dueOver : due[1] === "soon" ? s.dueSoon : null]}>{due[0]}</Text>}
@@ -359,8 +464,19 @@ export default function Dashboard({ username, logout }: { username: string; logo
       {isDemo && <Hint>デモ画面です（保存・AIは動きません）</Hint>}
       {!!error && <Text accessibilityRole="alert" style={s.error}>{error}</Text>}
       {!!notice && <Text accessibilityLiveRegion="polite" style={s.notice}>{notice}</Text>}
+      {undo && <View style={s.undo}><Text accessibilityLiveRegion="polite" style={s.undoText}>{undo.text}</Text>
+        <Button small title="元に戻す" disabled={busy} onPress={() => { const saved = undo; void run(() => undoMove(saved)); }} /></View>}
     </View>
-    <ScrollView ref={scroll} contentContainerStyle={[s.content, wide && s.wideWidth]} keyboardShouldPersistTaps="handled">
+    {/* 長押しで持ち上げたあとの指の動きは、この View が受け取る */}
+    <View ref={scrollBox} style={s.scrollBox}
+      onMoveShouldSetResponderCapture={() => !!dragging.current}
+      onResponderGrant={() => { if (dragging.current) dragging.current.captured = true; }}
+      onResponderMove={event => moveDrag(event.nativeEvent.pageY)}
+      onResponderRelease={() => endDrag(true)}
+      onResponderTerminationRequest={() => !dragging.current}
+      onResponderTerminate={() => endDrag(false)}>
+    <ScrollView ref={scroll} contentContainerStyle={[s.content, wide && s.wideWidth]} keyboardShouldPersistTaps="handled"
+      scrollEnabled={!drag} scrollEventThrottle={16} onScroll={event => { scrollY.current = event.nativeEvent.contentOffset.y; }}>
 
       {/* ホーム：調子 → 提案 → やること → 記録 の順に上から操作する */}
       <View style={[wide ? s.columns : s.stack, hidden("now")]}>
@@ -498,11 +614,20 @@ export default function Dashboard({ username, logout }: { username: string; logo
             <TaskDonut tasks={filtered} now={now} />
             {groupFilter === "all" && groups.length > 0 ? groupSections(open, groups).map(section =>
               <View key={String(section.id)} style={{ gap: 6 }}>
-                <Label>{section.name}・未完了 {section.tasks.length}件</Label>
-                {section.tasks.length ? buildTree(section.tasks, compare).map(taskRow) : <Hint>タスクはありません</Hint>}
-              </View>) : buildTree(open, compare).map(taskRow)}
+                <View ref={dropArea(`group:${section.id}`, { kind: "group", groupId: section.id, name: section.name })}
+                  style={[s.dropHeader, drag?.key === `group:${section.id}` && s.dropHover]}>
+                  <Label>{section.name}・未完了 {section.tasks.length}件</Label>
+                </View>
+                {section.tasks.length ? buildTree(section.tasks, compare).map(row => taskRow(row, true)) : <Hint>タスクはありません</Hint>}
+              </View>) : <>
+                {drag && <View ref={dropArea("root", { kind: "root", groupId: typeof groupFilter === "number" ? groupFilter : null,
+                  name: typeof groupFilter === "number" ? groups.find(group => group.id === groupFilter)?.name ?? null : null })}
+                  style={[s.rootBand, drag.key === "root" && s.dropHover]}><Hint>ここに離すと最上位に移動</Hint></View>}
+                {buildTree(open, compare).map(row => taskRow(row, true))}
+              </>}
+            {open.length > 1 && !isDemo && <Hint>タスクを長押しして別のタスクの上に離すと、その下に移せます</Hint>}
             {!!done.length && <Details title={`完了済み（${done.length}件）`}>
-              {buildTree(done, compare).map(taskRow)}
+              {buildTree(done, compare).map(row => taskRow(row))}
             </Details>}
             {!!tasks.length && <Hint>タスク名を押すと編集できます</Hint>}
             {tree.some(row => row.childCount > 0) && <Hint>見出しは、中のタスクをすべて完了すると自動で完了します</Hint>}
@@ -519,6 +644,12 @@ export default function Dashboard({ username, logout }: { username: string; logo
       </View>
 
     </ScrollView>
+    </View>
+    {/* ドラッグ中のタスク。指に付いてきて、どこへ移すかを表示する */}
+    {drag && <Animated.View pointerEvents="none" style={[s.ghost, { transform: [{ translateY: ghostY }] }]}>
+      <Text numberOfLines={1} style={s.taskTitle}>{drag.task.title}</Text>
+      <Text style={drag.label ? s.ghostLabel : ui.hint}>{drag.label ?? "ここには移せません"}</Text>
+    </Animated.View>}
     {/* 振り返り：終了予定の30分前になると画面の横から出てくる */}
     {panelMounted && <Animated.View pointerEvents={showReflection ? "auto" : "none"} accessibilityViewIsModal={showReflection}
       style={[s.panel, { width: panelWidth, maxHeight: screenHeight - 24, opacity: slide,
@@ -551,6 +682,9 @@ export default function Dashboard({ username, logout }: { username: string; logo
   </SafeAreaView></SafeAreaProvider>;
 }
 
+// Web で長押し中に文字が選択されないようにする（ネイティブの型には無い指定のため別に持つ）。
+const noSelect = { userSelect: "none" } as unknown as ViewStyle;
+
 const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.background, overflow: "hidden" },
   panel: { position: "absolute", top: 12, right: 12, backgroundColor: "white", borderRadius: 18,
@@ -580,6 +714,16 @@ const s = StyleSheet.create({
   body: { fontSize: 15, lineHeight: 23, color: colors.text },
   suggestion: { padding: 14, backgroundColor: colors.soft, borderRadius: 12, gap: 10 },
   rest: { backgroundColor: "#f4f1ea" },
+  scrollBox: { flex: 1 },
+  dropHover: { borderColor: colors.primary, borderWidth: 2, backgroundColor: colors.soft, borderRadius: 10 },
+  dragging: { opacity: 0.4 },
+  dropHeader: { paddingVertical: 4, paddingHorizontal: 4 },
+  rootBand: { padding: 12, borderWidth: 1, borderStyle: "dashed", borderColor: colors.border, borderRadius: 10, alignItems: "center" },
+  ghost: { position: "absolute", top: 0, left: 16, right: 16, padding: 12, gap: 2, borderRadius: 12, backgroundColor: "white", opacity: 0.95,
+    borderWidth: 2, borderColor: colors.primary, shadowColor: "#000", shadowOpacity: 0.2, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 10 },
+  ghostLabel: { fontSize: 13, fontWeight: "700", color: colors.primary },
+  undo: { flexDirection: "row", alignItems: "center", gap: 8, padding: 8, paddingLeft: 12, backgroundColor: "#deeee4", borderRadius: 10 },
+  undoText: { flex: 1, color: "#234e3d" },
   log: { gap: 4, padding: 12, borderRadius: 10, backgroundColor: colors.soft },
   logItem: { fontSize: 14, lineHeight: 21, color: colors.text },
 });
