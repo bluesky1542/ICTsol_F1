@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { Platform, StyleSheet, Text, TextInput } from "react-native";
 import { api } from "./api";
-import GoogleCalendarLink from "./GoogleCalendarLink";
 import ScheduleCalendar from "./ScheduleCalendar";
 import { parseLocalDateTime, type CalendarSnapshot } from "./calendarView";
 import { Button, Card, Details, Hint, Label, Row, s as ui } from "./ui";
@@ -88,7 +87,6 @@ export default function CalendarPanel({ disabled, run, changed, reload }: Props)
         <Button primary title="取り込む" disabled={disabled || !selected.length} onPress={() => void run(sync)} /></>}
     </>}
 
-    <GoogleCalendarLink />
     <Details>
       <Hint>サーバーに保存するのは予定の開始・終了時刻だけです。タイトル・説明・参加者は送信しません。そのため予定は「予定あり」と表示します。</Hint>
       <Hint>端末からの取り込みはボタンを押したときだけ行います。予定が変わったときや24時間経ったら取り込み直してください。終日の予定は一日中「予定あり」として扱います。手入力の予定は取り込み直す必要はありません。</Hint>
