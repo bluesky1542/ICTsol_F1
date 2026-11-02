@@ -8,7 +8,7 @@ import TaskDonut from "./TaskDonut";
 import TaskGroupPanel, { GroupChips } from "./TaskGroupPanel";
 import { filterTasks, groupSections, type GroupFilter } from "./taskGroups";
 import { deadlinePassed } from "./taskStats";
-import { buildTree, descendantIds, type TaskRow } from "./taskTree";
+import { buildTree, descendantIds, descendantSummary, type TaskRow } from "./taskTree";
 import { isDemo } from "./demo";
 import { askNotificationPermission, scheduleNotification } from "./notify";
 import { Button, Card, colors, Details, Hint, Input, Label, Row, Stars, Tabs, TimeField, s as ui } from "./ui";
@@ -193,8 +193,11 @@ export default function Dashboard({ username, logout }: { username: string; logo
     }
     if (time && !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) throw new Error("締切の時刻は 18:30 のように入力してください。");
     const deadline = date ? (time ? `${date}T${time}` : date) : null;
+    const original = editingHeading ? tasks.find(task => task.id === editing) : null;
     await api<Task>(editing === null ? "/tasks" : `/tasks/${editing}`, editing === null ? "POST" : "PUT", {
       title: title.trim(), minutes: integer(minutes), deadline, priority, concentration, place: place.trim(), parent_id: parentId, group_id: groupId,
+      ...(original ? { minutes: original.minutes, deadline: original.deadline, priority: original.priority,
+        concentration: original.concentration, place: original.place } : {}),
     });
     setTasks(await api<Task[]>("/tasks"));
     resetForm(); invalidate(); setNotice("タスクを保存しました。");
@@ -223,6 +226,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
   const open = filtered.filter(t => !t.completed);
   const done = filtered.filter(t => t.completed);
   const tree = buildTree(tasks, compare), counts = new Map(tree.map(row => [row.task.id, row]));
+  const editingHeading = editing !== null && (counts.get(editing)?.childCount ?? 0) > 0;
   const hiddenIds = new Set([...collapsed].flatMap(id => [...descendantIds(tasks, id)]));
   const excluded = new Set(editing === null ? [] : [editing, ...descendantIds(tasks, editing)]);
   const parent = tasks.find(task => task.id === parentId);
@@ -248,21 +252,24 @@ export default function Dashboard({ username, logout }: { username: string; logo
   function taskRow({ task, depth }: TaskRow) {
     if (hiddenIds.has(task.id)) return null;
     const { childCount, doneChildCount } = counts.get(task.id)!;
+    const summary = childCount > 0 ? descendantSummary(tasks, task.id) : null;
     const folded = collapsed.has(task.id);
     const missingParent = depth === 0 ? tasks.find(parent => parent.id === task.parent_id) : null;
     const meta = [`${task.minutes}分`, task.place].filter(Boolean).join(" · ");
-    const due = task.deadline && !task.completed ? deadlineLabel(task.deadline, now) : null;
+    const due = !summary && task.deadline && !task.completed ? deadlineLabel(task.deadline, now) : null;
     return <View key={task.id} style={[s.taskRow, { marginLeft: Math.min(depth, 4) * 16 }]}>
       <Pressable accessibilityRole="button" accessibilityLabel={`${task.title}を編集`} disabled={busy}
         onPress={() => startEdit(task)} style={s.taskBody}>
-        <Text style={[s.taskTitle, task.completed && s.done]}>{task.title}</Text>
+        <Text style={[s.taskTitle, summary && s.headingTitle, task.completed && s.done]}>{task.title}</Text>
         <View style={s.metaRow}>
           {due && <Text style={[s.due, due[1] === "over" ? s.dueOver : due[1] === "soon" ? s.dueSoon : null]}>{due[0]}</Text>}
-          {task.completed && !!task.deadline && <Text style={ui.hint}>締切 {shortDate(task.deadline)}{task.deadline.slice(10).replace("T", " ")}</Text>}
-          <Text style={ui.hint}>{meta}</Text>
+          {!summary && task.completed && !!task.deadline && <Text style={ui.hint}>締切 {shortDate(task.deadline)}{task.deadline.slice(10).replace("T", " ")}</Text>}
+          {!summary && <Text style={ui.hint}>{meta}</Text>}
+          {summary && summary.minutes > 0 && <Text style={ui.hint}>残り{summary.minutes}分</Text>}
+          {summary?.deadline && <Text style={ui.hint}>最短締切 {shortDate(summary.deadline)}</Text>}
           {missingParent && <Text style={ui.hint}>↳ {missingParent.title}</Text>}
-          {task.priority === "high" && <Text style={s.badge}>優先</Text>}
-          {task.concentration === "high" && <Text style={s.badge}>集中</Text>}
+          {!summary && task.priority === "high" && <Text style={s.badge}>優先</Text>}
+          {!summary && task.concentration === "high" && <Text style={s.badge}>集中</Text>}
           {childCount > 0 && <Text style={s.badge}>子 {doneChildCount}/{childCount}完了</Text>}
         </View>
       </Pressable>
@@ -372,7 +379,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
         <View ref={taskCard} style={[s.stack, wide && s.column]}>
           {/* やること：追加・編集フォームと一覧を1枚にまとめる */}
           <View>
-          <Card title={editing === null ? `やること ${open.length}件` : "タスクを編集"}>
+          <Card title={editing === null ? `やること ${open.length}件` : editingHeading ? "見出しを編集" : "タスクを編集"}>
             {editing === null && parent && <Label>「{parent.title}」の下に追加</Label>}
             <Hint>親：{parent?.title ?? (parentId === null ? "なし（最上位）" : "見つからないタスク")}</Hint>
             <Row>
@@ -393,7 +400,8 @@ export default function Dashboard({ username, logout }: { username: string; logo
               <Label>グループ</Label>
               <GroupChips groups={groups} value={groupId} disabled={busy} set={value => setGroupId(value === "all" ? null : value)} />
             </>}
-            <Input label="タスク名" hideLabel value={title} set={setTitle} placeholder="タスク名（例：レポートの下書き）" disabled={busy} />
+            <Input label={editingHeading ? "題名" : "タスク名"} hideLabel value={title} set={setTitle} placeholder={editingHeading ? "見出しの題名" : "タスク名（例：レポートの下書き）"} disabled={busy} />
+            {!editingHeading && <>
             <Label>かかる時間</Label>
             <Row>
               <View style={s.minutesInput}><Input label="かかる時間（分）" hideLabel value={minutes} set={setMinutes} numeric placeholder="分" disabled={busy} /></View>
@@ -411,6 +419,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
             <Label>必要な集中度</Label><Row>{levels.map(([key, text]) => <Button key={key} small title={text}
               selected={concentration === key} disabled={busy} onPress={() => setConcentration(key)} />)}</Row>
             <Input label="場所（空欄ならどこでも）" value={place} set={setPlace} placeholder="例：自宅" disabled={busy} />
+            </>}
             <Row><Button primary title={editing === null ? "追加" : "保存"} disabled={busy || !connected} onPress={() => void run(saveTask)} />
               {editing !== null && <Button title="やめる" disabled={busy} onPress={resetForm} />}</Row>
             {!tasks.length && <Hint>まだタスクがありません。上の欄から追加しましょう。</Hint>}
@@ -430,7 +439,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
               {buildTree(done, compare).map(taskRow)}
             </Details>}
             {!!tasks.length && <Hint>タスク名を押すと編集できます</Hint>}
-            {tree.some(row => row.childCount > 0) && <Hint>子をすべて完了すると自動で完了します</Hint>}
+            {tree.some(row => row.childCount > 0) && <Hint>見出しは、中のタスクをすべて完了すると自動で完了します</Hint>}
             <TaskGroupPanel groups={groups} disabled={busy || !connected || isDemo} run={run} changed={refresh} />
           </Card>
           </View>
@@ -491,6 +500,7 @@ const s = StyleSheet.create({
   treeToggle: { minWidth: 44, minHeight: 44, alignItems: "center", justifyContent: "center" },
   taskBody: { minWidth: 0, minHeight: 44, justifyContent: "center", gap: 2, paddingVertical: 6 },
   taskTitle: { fontSize: 16, color: "#243e33", fontWeight: "600" }, done: { textDecorationLine: "line-through", color: "#738179" },
+  headingTitle: { fontSize: 18, fontWeight: "700" },
   metaRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6 },
   badge: { fontSize: 11, fontWeight: "700", color: colors.primary, backgroundColor: colors.soft, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, overflow: "hidden" },
   minutesInput: { width: 90 },

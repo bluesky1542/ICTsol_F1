@@ -200,7 +200,8 @@ def suggest(context: SuggestionInput, user: User):
     calendar_before = get_calendar(user) if context.use_calendar else None
     available = free_minutes(user, context.available_minutes) if context.use_calendar else context.available_minutes
     all_tasks = storage.tasks(user["id"])
-    candidates = [t for t in all_tasks if not t["completed"]
+    parents = {t["parent_id"] for t in all_tasks}
+    candidates = [t for t in all_tasks if not t["completed"] and t["id"] not in parents
                   and t["minutes"] <= available
                   and (not t["place"] or t["place"] == context.place)]
     # 入力が肥大化しないよう、締切と優先度順で最大30件を送信する。
@@ -212,22 +213,24 @@ def suggest(context: SuggestionInput, user: User):
     if not candidates:
         return {"source": "no_candidates", "available_minutes": available, "choices": [], "rest_reason": "今の時間・場所で取り組めるタスクはありません。休息も選べます。"}
     titles = {t["id"]: t["title"] for t in all_tasks}
-    parents = {t["parent_id"] for t in all_tasks}
     group_names = {group["id"]: group["name"] for group in list_groups(user)}
     ai_tasks = [{**{key: t[key] for key in (
         "id", "title", "minutes", "deadline", "priority", "concentration", "place", "parent_id")},
-        "parent_title": titles.get(t["parent_id"]), "has_children": t["id"] in parents,
+        "parent_title": titles.get(t["parent_id"]),
         "group_name": group_names.get(t["group_id"])} for t in candidates]
     result = recommendations.generate(ai_tasks, condition["level"], available, context.place, user["id"])
     require_current_condition(user)
     # AI処理中に完了・編集されたタスクの古い提案は表示しない。
     current = {t["id"]: t for t in storage.tasks(user["id"])}
+    current_parents = {t["parent_id"] for t in current.values()}
     original = {t["id"]: t for t in candidates}
     calendar_changed = context.use_calendar and (
         get_calendar(user) != calendar_before or
         any(original[c.task_id]["minutes"] > free_minutes(user, context.available_minutes) for c in result.choices)
     )
-    if calendar_changed or get_condition(user) != condition or any(current.get(c.task_id) != original[c.task_id] for c in result.choices):
+    if calendar_changed or get_condition(user) != condition or any(
+        c.task_id in current_parents or current.get(c.task_id) != original[c.task_id] for c in result.choices
+    ):
         raise HTTPException(409, "入力が更新されました。もう一度提案を取得してください。")
     return {"source": "ai", "available_minutes": available, "choices": [{"task": Task(**current[c.task_id]), "reason": c.reason} for c in result.choices], "rest_reason": result.rest_reason}
 

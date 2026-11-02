@@ -48,3 +48,15 @@ export function descendantIds(tasks: readonly Task[], id: number): Set<number> {
   }
   return result;
 }
+
+export function descendantSummary(tasks: readonly Task[], id: number) {
+  const descendants = descendantIds(tasks, id), parents = new Set(tasks.map(task => task.parent_id));
+  let minutes = 0, deadline: string | null = null;
+  const key = (value: string) => value.length === 10 ? `${value}T24:00` : value;
+  for (const task of tasks) {
+    if (!descendants.has(task.id) || task.completed) continue;
+    if (!parents.has(task.id)) minutes += task.minutes;
+    if (task.deadline && (deadline === null || key(task.deadline) < key(deadline))) deadline = task.deadline;
+  }
+  return { minutes, deadline };
+}

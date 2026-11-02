@@ -87,15 +87,20 @@ class GeminiTest(unittest.TestCase):
         self.assertEqual(len(payload["tasks"]), 1)
         child = payload["tasks"][0]
         self.assertEqual(set(child), {"id", "title", "minutes", "deadline", "priority", "concentration", "place",
-                                      "parent_id", "parent_title", "has_children", "group_name"})
+                                      "parent_id", "parent_title", "group_name"})
         self.assertEqual(child["parent_title"], parent["title"])
-        self.assertFalse(child["has_children"])
+        self.assertNotIn("has_children", child)
         self.assertEqual(self.client.put(f'/api/tasks/{parent["id"]}', json={"title": parent["title"], "minutes": 10}).status_code, 200)
         self.assertEqual(self.suggest().status_code, 200)
         payload = json.loads(self.post.call_args.kwargs["json"]["contents"][0]["parts"][0]["text"])
-        sent_parent = next(task for task in payload["tasks"] if task["id"] == parent["id"])
-        self.assertTrue(sent_parent["has_children"])
-        self.assertIsNone(sent_parent["parent_title"])
+        self.assertEqual([task["id"] for task in payload["tasks"]], [self.task["id"]])
+
+    def test_candidate_becoming_heading_during_ai_is_rejected(self):
+        def added(*args, **kwargs):
+            self.client.post("/api/tasks", json={"title": "新しい子", "minutes": 10, "parent_id": self.task["id"]})
+            return self.post.return_value
+        self.post.side_effect = added
+        self.assertEqual(self.suggest().status_code, 409)
 
     def test_tree_changed_during_ai_is_rejected(self):
         parent = self.client.post("/api/tasks", json={"title": "親", "minutes": 10}).json()

@@ -1,11 +1,28 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildTree, descendantIds } from "../taskTree.ts";
+import { buildTree, descendantIds, descendantSummary } from "../taskTree.ts";
 
 const task = (id, parent_id = null, completed = false) => ({ id, parent_id, completed,
   title: `タスク${id}`, minutes: 10, deadline: null, priority: "medium", concentration: "low", place: "" });
 const compare = (first, second) => first.id - second.id;
 const positions = tasks => buildTree(tasks, compare).map(row => [row.task.id, row.depth]);
+
+test("残り時間は未完了の葉だけを合計し、締切は未完了の子孫から探す", () => {
+  const tasks = Object.freeze([task(1), { ...task(2, 1), minutes: 120 },
+    { ...task(3, 2), minutes: 25, deadline: "2026-11-05" },
+    { ...task(4, 1), minutes: 20, deadline: "2026-11-05T18:00" },
+    { ...task(5, 2, true), deadline: "2026-11-01" }, task(6)].map(Object.freeze));
+  assert.deepEqual(descendantSummary(tasks, 1), { minutes: 45, deadline: "2026-11-05T18:00" });
+  assert.deepEqual(descendantSummary(tasks, 3), { minutes: 0, deadline: null });
+  assert.deepEqual(descendantSummary([], 99), { minutes: 0, deadline: null });
+});
+
+test("残り時間の集計は完了した見出しの下も辿り、深い階層・循環でも止まる", () => {
+  assert.deepEqual(descendantSummary([task(1), task(2, 1, true), task(3, 2)], 1), { minutes: 10, deadline: null });
+  assert.deepEqual(descendantSummary([task(1, 2), task(2, 1), task(3, 2)], 1), { minutes: 10, deadline: null });
+  const tasks = Array.from({ length: 50000 }, (_, index) => task(index, index === 0 ? null : index - 1));
+  assert.deepEqual(descendantSummary(tasks, 0), { minutes: 10, deadline: null });
+});
 
 test("親を先に、ルートと兄弟をcompare順に並べ、入力を変更しない", () => {
   const tasks = Object.freeze([task(6), task(5, 1), task(4, 2), task(3, 1), task(2, 1), task(1)]
