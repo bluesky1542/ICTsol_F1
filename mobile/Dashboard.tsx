@@ -78,6 +78,8 @@ export default function Dashboard({ username, logout }: { username: string; logo
   const [place, setPlace] = useState("");
   const [editing, setEditing] = useState<number | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
+  // 一覧の行で「親を変更」を開いているタスク。
+  const [moving, setMoving] = useState<number | null>(null);
   const [parentId, setParentId] = useState<number | null>(null);
   const [parentOpen, setParentOpen] = useState(false);
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
@@ -265,6 +267,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
       : target.name ? `「${target.name}」の最上位` : "最上位";
     setUndo({ text: `「${task.title}」を${place}に移しました。`, taskId: task.id,
       parent_id: task.parent_id, group_id: task.group_id });
+    setMoving(null);
   }
   async function undoMove(saved: NonNullable<typeof undo>) {
     const task = tasks.find(value => value.id === saved.taskId);
@@ -394,6 +397,33 @@ export default function Dashboard({ username, logout }: { username: string; logo
     });
   }
 
+  // 一覧の行の下に開く「どこに入れる？」。選ぶとすぐ移し、「元に戻す」を出す。
+  function parentPicker(task: Task) {
+    const roots: DropTarget[] = groups.length
+      ? [...groups.map(group => ({ kind: "root" as const, groupId: group.id, name: group.name })), { kind: "root", groupId: null, name: "未分類" }]
+      : [{ kind: "root", groupId: null, name: null }];
+    const choose = (target: DropTarget) => {
+      const change = dropChange(tasks, task.id, target);
+      if (change) void run(() => moveTask(task, target, change));
+    };
+    const inside = descendantIds(tasks, task.id);
+    return <View style={s.picker}>
+      <Hint>「{task.title}」をどこに入れる？（中のタスクも一緒に移ります）</Hint>
+      <ScrollView style={s.pickerList} contentContainerStyle={{ gap: 6 }} nestedScrollEnabled>
+        <Row>{roots.map(target => <Button key={String(target.kind === "root" ? target.groupId : "")} small
+          title={target.kind === "root" && target.name ? `最上位（${target.name}）` : "なし（最上位）"}
+          selected={task.parent_id === null && target.kind === "root" && task.group_id === target.groupId}
+          disabled={busy || !dropChange(tasks, task.id, target)} onPress={() => choose(target)} />)}</Row>
+        {tree.filter(row => row.task.id !== task.id && !inside.has(row.task.id)).map(({ task: candidate, depth }) =>
+          <View key={candidate.id} style={{ marginLeft: Math.min(depth, 4) * 16 }}>
+            <Button small title={`${candidate.title}${candidate.completed ? "（完了済み）" : ""}の下`} selected={candidate.id === task.parent_id}
+              disabled={busy || candidate.id === task.parent_id} onPress={() => choose({ kind: "task", id: candidate.id })} />
+          </View>)}
+      </ScrollView>
+      <Row><Button small title="やめる" disabled={busy} onPress={() => setMoving(null)} /></Row>
+    </View>;
+  }
+
   // 描画のたびに部品を作り直さないよう、関数として呼び出す。
   function taskRow({ task, depth }: TaskRow, draggable = false) {
     if (hiddenIds.has(task.id)) return null;
@@ -440,11 +470,14 @@ export default function Dashboard({ username, logout }: { username: string; logo
         {childCount === 0 && <Button small title={task.completed ? "戻す" : "✓ 完了"}
           label={`${task.title}を${task.completed ? "未完了に戻す" : "完了にする"}`} disabled={busy}
           onPress={() => void run(() => toggleTask(task))} />}
+        <Button small title={moving === task.id ? "▾ 親を変更" : "親を変更"} label={`${task.title}の親を変更`} selected={moving === task.id}
+          disabled={busy || isDemo} onPress={() => { setMoving(moving === task.id ? null : task.id); setConfirmDelete(null); }} />
         <Button small title="削除" label={`${task.title}を削除`} disabled={busy || isDemo}
-          onPress={() => setConfirmDelete(task.id)} />
+          onPress={() => { setConfirmDelete(task.id); setMoving(null); }} />
         </>}
       </Row>
       {confirmDelete === task.id && childCount > 0 && <Hint>中のタスク {descendantIds(tasks, task.id).size}件も削除されます</Hint>}
+      {moving === task.id && parentPicker(task)}
     </View>;
   }
 
@@ -625,7 +658,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
                   style={[s.rootBand, drag.key === "root" && s.dropHover]}><Hint>ここに離すと最上位に移動</Hint></View>}
                 {buildTree(open, compare).map(row => taskRow(row, true))}
               </>}
-            {open.length > 1 && !isDemo && <Hint>タスクを長押しして別のタスクの上に離すと、その下に移せます</Hint>}
+            {open.length > 1 && !isDemo && <Hint>「親を変更」か、長押しして別のタスクの上に離すと、そのタスクの下に移せます</Hint>}
             {!!done.length && <Details title={`完了済み（${done.length}件）`}>
               {buildTree(done, compare).map(row => taskRow(row))}
             </Details>}
@@ -715,6 +748,8 @@ const s = StyleSheet.create({
   suggestion: { padding: 14, backgroundColor: colors.soft, borderRadius: 12, gap: 10 },
   rest: { backgroundColor: "#f4f1ea" },
   scrollBox: { flex: 1 },
+  picker: { gap: 8, padding: 12, borderRadius: 10, backgroundColor: colors.soft },
+  pickerList: { maxHeight: 260 },
   dropHover: { borderColor: colors.primary, borderWidth: 2, backgroundColor: colors.soft, borderRadius: 10 },
   dragging: { opacity: 0.4 },
   dropHeader: { paddingVertical: 4, paddingHorizontal: 4 },
