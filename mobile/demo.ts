@@ -5,15 +5,15 @@ export const isDemo = Platform.OS === "web" && (process.env.EXPO_PUBLIC_DEMO_MOD
   || (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("demo") === "1"));
 
 const tasks: Task[] = [
-  { id: 1, parent_id: null, group_id: 1, title: "レポートを仕上げる", minutes: 15, deadline: null, priority: "high", concentration: "medium", place: "", completed: false },
-  { id: 2, parent_id: null, group_id: null, title: "机の上を片づける", minutes: 10, deadline: null, priority: "low", concentration: "low", place: "自宅", completed: false },
-  { id: 3, parent_id: null, group_id: 2, title: "チームの発表資料を確認する", minutes: 30, deadline: null, priority: "medium", concentration: "high", place: "", completed: false },
-  { id: 4, parent_id: 1, group_id: 1, title: "参考資料を集める", minutes: 5, deadline: null, priority: "medium", concentration: "low", place: "", completed: true },
-  { id: 5, parent_id: null, group_id: 1, title: "資料の共有を終える", minutes: 10, deadline: null, priority: "low", concentration: "low", place: "", completed: true },
-  { id: 6, parent_id: 1, group_id: 1, title: "レポートの見出しを考える", minutes: 15, deadline: null, priority: "high", concentration: "medium", place: "", completed: false },
-  { id: 7, parent_id: 6, group_id: 1, title: "最初の見出しを書き出す", minutes: 5, deadline: null, priority: "medium", concentration: "low", place: "", completed: false },
-  { id: 8, parent_id: 5, group_id: 1, title: "資料を共有フォルダにまとめる", minutes: 10, deadline: null, priority: "low", concentration: "low", place: "", completed: true },
-  { id: 9, parent_id: 5, group_id: 1, title: "共有リンクをチームに送る", minutes: 5, deadline: null, priority: "medium", concentration: "low", place: "", completed: true },
+  { id: 1, group_id: 1, title: "レポートを仕上げる", minutes: 15, deadline: null, priority: "high", concentration: "medium", place: "", completed: false },
+  { id: 2, group_id: null, title: "机の上を片づける", minutes: 10, deadline: null, priority: "low", concentration: "low", place: "自宅", completed: false },
+  { id: 3, group_id: 2, title: "チームの発表資料を確認する", minutes: 30, deadline: null, priority: "medium", concentration: "high", place: "", completed: false },
+  { id: 4, group_id: 1, title: "参考資料を集める", minutes: 5, deadline: null, priority: "medium", concentration: "low", place: "", completed: true },
+  { id: 5, group_id: 1, title: "資料の共有を終える", minutes: 10, deadline: null, priority: "low", concentration: "low", place: "", completed: true },
+  { id: 6, group_id: 1, title: "レポートの構成を考える", minutes: 15, deadline: null, priority: "high", concentration: "medium", place: "", completed: false },
+  { id: 7, group_id: 1, title: "序論を書き出す", minutes: 5, deadline: null, priority: "medium", concentration: "low", place: "", completed: false },
+  { id: 8, group_id: 1, title: "資料を共有フォルダにまとめる", minutes: 10, deadline: null, priority: "low", concentration: "low", place: "", completed: true },
+  { id: 9, group_id: 1, title: "共有リンクをチームに送る", minutes: 5, deadline: null, priority: "medium", concentration: "low", place: "", completed: true },
 ];
 
 // 閲覧用データだけを返し、サーバーへの通信や保存は行わない。
