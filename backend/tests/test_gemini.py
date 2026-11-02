@@ -76,39 +76,17 @@ class GeminiTest(unittest.TestCase):
         self.assertIn("comment などの文字列", instructions)
         self.http.assert_called_once_with(timeout=25)
 
-    def test_tree_payload_contains_only_public_fields(self):
-        parent = self.client.post("/api/tasks", json={"title": "親の資料", "minutes": 120}).json()
-        response = self.client.put(f'/api/tasks/{self.task["id"]}', json={
-            "title": self.task["title"], "minutes": 10, "parent_id": parent["id"],
-        })
-        self.assertEqual(response.status_code, 200)
+    def test_payload_contains_only_public_fields(self):
         self.assertEqual(self.suggest().status_code, 200)
         payload = json.loads(self.post.call_args.kwargs["json"]["contents"][0]["parts"][0]["text"])
-        self.assertEqual(len(payload["tasks"]), 1)
-        child = payload["tasks"][0]
-        self.assertEqual(set(child), {"id", "title", "minutes", "deadline", "priority", "concentration", "place",
-                                      "parent_id", "parent_title", "group_name"})
-        self.assertEqual(child["parent_title"], parent["title"])
-        self.assertNotIn("has_children", child)
-        self.assertEqual(self.client.put(f'/api/tasks/{parent["id"]}', json={"title": parent["title"], "minutes": 10}).status_code, 200)
-        self.assertEqual(self.suggest().status_code, 200)
-        payload = json.loads(self.post.call_args.kwargs["json"]["contents"][0]["parts"][0]["text"])
-        self.assertEqual([task["id"] for task in payload["tasks"]], [self.task["id"]])
+        self.assertEqual(set(payload["tasks"][0]), {"id", "title", "minutes", "deadline", "priority", "concentration", "place", "group_name"})
 
-    def test_candidate_becoming_heading_during_ai_is_rejected(self):
-        def added(*args, **kwargs):
-            self.client.post("/api/tasks", json={"title": "新しい子", "minutes": 10, "parent_id": self.task["id"]})
-            return self.post.return_value
-        self.post.side_effect = added
-        self.assertEqual(self.suggest().status_code, 409)
-
-    def test_tree_changed_during_ai_is_rejected(self):
-        parent = self.client.post("/api/tasks", json={"title": "親", "minutes": 10}).json()
-        def moved(*args, **kwargs):
-            self.client.put(f'/api/tasks/{self.task["id"]}', json={"title": self.task["title"], "minutes": 10, "parent_id": parent["id"]})
+    def test_task_changed_during_ai_is_rejected(self):
+        def edited(*args, **kwargs):
+            self.client.put(f'/api/tasks/{self.task["id"]}', json={"title": "書き換えた", "minutes": 10})
             return httpx.Response(200, json={"candidates": [{"finishReason": "STOP", "content": {
                 "parts": [{"text": json.dumps(self.result)}]}}]}, request=httpx.Request("POST", "https://generativelanguage.googleapis.com"))
-        self.post.side_effect = moved
+        self.post.side_effect = edited
         self.assertEqual(self.suggest().status_code, 409)
 
     def test_survey_history_is_limited_ordered_and_owned(self):

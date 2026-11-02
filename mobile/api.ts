@@ -5,7 +5,7 @@ export type Level = "low" | "medium" | "high";
 export type ConditionLevel = "good" | "slightly_good" | "normal" | "slightly_tired" | "tired";
 export type TaskGroup = { id: number; name: string };
 export type Task = {
-  id: number; parent_id: number | null; group_id: number | null; title: string; minutes: number; deadline: string | null;
+  id: number; group_id: number | null; title: string; minutes: number; deadline: string | null;
   priority: Level; concentration: Level; place: string; completed: boolean;
 };
 export type Condition = { level: ConditionLevel; updated_at: string; expires_at: string };

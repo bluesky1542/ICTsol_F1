@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timezone
 import re
 import sqlite3
 from contextlib import contextmanager
@@ -52,19 +53,38 @@ def lock_tasks(db, user_id):
         db.execute("BEGIN IMMEDIATE")
 
 
-def refresh_ancestors(db, user_id, parent_id):
-    # 指定した親から上へ再計算する。子がなくなった親は直前の完了状態を保つ。
-    visited = set()
-    while parent_id is not None and parent_id not in visited:
-        visited.add(parent_id)
-        parent = db.execute("SELECT parent_id FROM tasks WHERE id=? AND user_id=?", (parent_id, user_id)).fetchone()
-        if not parent:
-            break
-        children = db.execute("SELECT completed FROM tasks WHERE parent_id=? AND user_id=?", (parent_id, user_id)).fetchall()
-        if children:
-            db.execute("UPDATE tasks SET completed=? WHERE id=? AND user_id=?",
-                       (int(all(child["completed"] for child in children)), parent_id, user_id))
-        parent_id = parent["parent_id"]
+def migrate_tree_to_groups(db):
+    """親子（ツリー）をやめてグループに一本化したときの移行。何度実行しても結果は同じ。
+
+    子を持つタスク（見出し）ごとに、最上位の見出しの題名のグループを作り（同名があれば使う）、
+    中の子を持たないタスクをそのグループに入れて最上位に出す。見出し自体は削除する。
+    """
+    rows = db.execute("SELECT id,user_id,title,parent_id FROM tasks WHERE user_id IS NOT NULL").fetchall()
+    tasks = {row["id"]: row for row in rows}
+    headings = {row["parent_id"] for row in rows if row["parent_id"] is not None}
+    if not headings:
+        return
+    now = datetime.now(timezone.utc).isoformat()
+    groups = {}
+    for row in rows:
+        if row["parent_id"] is None or row["id"] in headings:
+            continue
+        # 最上位の見出しまでたどる（循環データでも止まる）。
+        root, seen = row["id"], set()
+        while tasks.get(root) is not None and tasks[root]["parent_id"] in tasks and root not in seen:
+            seen.add(root)
+            root = tasks[root]["parent_id"]
+        owner, name = row["user_id"], (tasks[root]["title"].strip() or "グループ")[:30]
+        if (owner, name) not in groups:
+            found = db.execute("SELECT id FROM task_groups WHERE user_id=? AND name=?", (owner, name)).fetchone()
+            groups[(owner, name)] = found["id"] if found else db.execute(
+                "INSERT INTO task_groups (user_id,name,created_at) VALUES (?,?,?) RETURNING id", (owner, name, now),
+            ).fetchone()["id"]
+        db.execute("UPDATE tasks SET group_id=?, parent_id=NULL WHERE id=?", (groups[(owner, name)], row["id"]))
+    for heading in headings:
+        db.execute("DELETE FROM tasks WHERE id=?", (heading,))
+    # 子を持たないまま親だけ残った行（見出しが消えていたなど）も最上位に戻す。
+    db.execute("UPDATE tasks SET parent_id=NULL WHERE parent_id IS NOT NULL")
 
 
 @contextmanager
@@ -199,6 +219,7 @@ def initialize():
                 db.execute(f"ALTER TABLE activities ADD COLUMN IF NOT EXISTS {name} {kind}")
             elif name not in existing:
                 db.execute(f"ALTER TABLE activities ADD COLUMN {name} {kind}")
+        migrate_tree_to_groups(db)
         if postgres:
             # Supabaseのブラウザ用APIからアプリの内部テーブルを参照させない。
             for role in ("PUBLIC", "anon", "authenticated"):

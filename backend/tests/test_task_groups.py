@@ -11,7 +11,7 @@ import httpx
 from fastapi.testclient import TestClient
 
 from app.database import database, initialize, lock_tasks
-from app.main import app, sync_group
+from app.main import app
 
 
 class TaskGroupCases:
@@ -28,7 +28,7 @@ class TaskGroupCases:
     def group_edit(self, task, **changes):
         response = self.client.put(f'/api/tasks/{task["id"]}', json={
             "title": task["title"], "minutes": task["minutes"],
-            "parent_id": task["parent_id"], "group_id": task["group_id"], **changes,
+            "group_id": task["group_id"], **changes,
         })
         self.assertEqual(response.status_code, 200, response.text)
         return response.json()
@@ -88,49 +88,16 @@ class TaskGroupCases:
         for group_id in (0, -1):
             self.assertEqual(self.client.post("/api/tasks", json={"title": "確認", "minutes": 10, "group_id": group_id}).status_code, 422)
 
-    def test_groups_tree_inheritance_move_and_detach(self):
+    def test_groups_move_and_delete_keeps_tasks(self):
         first, second = self.group(), self.group("生活")
-        root = self.group_task(group_id=first["id"])
-        child = self.group_task(parent_id=root["id"], group_id=2147483647)
-        grandchild = self.group_task(parent_id=child["id"], group_id=second["id"])
-        self.assert_groups([(root, first["id"]), (child, first["id"]), (grandchild, first["id"])])
-        self.group_edit(child, group_id=2147483647)
-        self.assert_groups([(child, first["id"]), (grandchild, first["id"])])
-        self.group_edit(root, group_id=second["id"])
-        self.assert_groups([(root, second["id"]), (child, second["id"]), (grandchild, second["id"])])
-        new_root = self.group_task(group_id=first["id"])
-        self.group_edit(child, parent_id=new_root["id"], group_id=second["id"])
-        self.assert_groups([(child, first["id"]), (grandchild, first["id"])])
-        self.group_edit(child, parent_id=None, group_id=second["id"])
-        self.assert_groups([(child, second["id"]), (grandchild, second["id"])])
-        self.group_edit(child, parent_id=None, group_id=None)
-        self.assert_groups([(child, None), (grandchild, None)])
-
-    def test_groups_delete_keeps_tasks_and_tree(self):
-        group = self.group()
-        root = self.group_task(group_id=group["id"])
-        child = self.group_task(parent_id=root["id"])
-        self.assertEqual(self.client.delete(f'/api/groups/{group["id"]}').status_code, 204)
+        task = self.group_task(group_id=first["id"])
+        self.assert_groups([(task, first["id"])])
+        task = self.group_edit(task, group_id=second["id"])
+        self.assert_groups([(task, second["id"])])
+        self.assertEqual(self.client.delete(f'/api/groups/{second["id"]}').status_code, 204)
         tasks = self.client.get("/api/tasks").json()
-        self.assertEqual(len(tasks), 2)
-        self.assertTrue(all(task["group_id"] is None for task in tasks))
-        self.assertEqual(next(task for task in tasks if task["id"] == child["id"])["parent_id"], root["id"])
-
-    def test_groups_sync_stops_at_cycles_and_handles_deep_trees(self):
-        group = self.group()
-        root = self.group_task()
-        user_id = self.client.get("/api/auth/me").json()["id"]
-        with database() as db:
-            lock_tasks(db, user_id)
-            parent_id = root["id"]
-            for _ in range(1100):
-                parent_id = db.execute(
-                    "INSERT INTO tasks (title,minutes,priority,concentration,place,parent_id,user_id) "
-                    "VALUES ('深い子',10,'medium','medium','',?,?) RETURNING id", (parent_id, user_id),
-                ).fetchone()["id"]
-            db.execute("UPDATE tasks SET parent_id=? WHERE id=? AND user_id=?", (parent_id, root["id"], user_id))
-            sync_group(db, user_id, root["id"], group["id"])
-        self.assertTrue(all(task["group_id"] == group["id"] for task in self.client.get("/api/tasks").json()))
+        self.assertEqual([(value["id"], value["group_id"]) for value in tasks], [(task["id"], None)])
+        self.assertNotIn("parent_id", tasks[0])
 
     def test_groups_gemini_payload(self):
         group = self.group()
@@ -151,6 +118,36 @@ class TaskGroupCases:
             names = {task["id"]: task["group_name"] for task in tasks}
             self.assertEqual(names, {grouped["id"]: "授業", plain["id"]: None})
             self.assertIn("group_name", body["systemInstruction"]["parts"][0]["text"])
+
+    def test_tree_is_migrated_to_groups(self):
+        # 親子（ツリー）の時代のデータ：見出し「レポート」の下に子と、さらに中見出しの下に孫。
+        user_id = self.client.get("/api/auth/me").json()["id"]
+        existing = self.group("授業")
+        with database() as db:
+            add = lambda title, parent, completed=0, group=None: db.execute(
+                "INSERT INTO tasks (title,minutes,priority,concentration,place,parent_id,group_id,completed,user_id) "
+                "VALUES (?,10,'medium','medium','',?,?,?,?) RETURNING id", (title, parent, group, completed, user_id)).fetchone()["id"]
+            report = add("レポート", None, group=existing["id"])
+            child = add("下書き", report, completed=1, group=existing["id"])
+            middle = add("中見出し", report, group=existing["id"])
+            grandchild = add("参考文献", middle, group=existing["id"])
+            lesson = add("授業", None)
+            homework = add("宿題", lesson)
+            alone = add("ひとりのタスク", None)
+        initialize()
+        initialize()
+        tasks = {task["id"]: task for task in self.client.get("/api/tasks").json()}
+        groups = {group["name"]: group["id"] for group in self.client.get("/api/groups").json()}
+        self.assertEqual(set(tasks), {child, grandchild, homework, alone})
+        self.assertEqual(groups.keys(), {"授業", "レポート"})
+        self.assertEqual(tasks[child]["group_id"], groups["レポート"])
+        self.assertTrue(tasks[child]["completed"])
+        self.assertEqual(tasks[grandchild]["group_id"], groups["レポート"])
+        # 同じ名前のグループがすでにあれば、それを使う。
+        self.assertEqual(tasks[homework]["group_id"], existing["id"])
+        self.assertIsNone(tasks[alone]["group_id"])
+        with database() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) AS n FROM tasks WHERE parent_id IS NOT NULL").fetchone()["n"], 0)
 
 
 class SQLiteTaskGroupTest(TaskGroupCases, unittest.TestCase):

@@ -2,22 +2,21 @@ import { useEffect, useRef, useState } from "react";
 import { Animated, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View, type ViewStyle } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
-import { Achievement, Activity, ActivityAction, api, Condition, ConditionLevel, Level, Reflection, Suggestions, Task, TaskGroup, WorkPlan } from "./api";
+import { Achievement, Activity, ActivityAction, api, Condition, ConditionLevel, Reflection, Suggestions, Task, TaskGroup, WorkPlan } from "./api";
 import CalendarPanel from "./CalendarPanel";
 import FocusCard from "./FocusCard";
-import { dropChange, dropLabel, findDropArea, type DropArea, type DropTarget } from "./dragDrop";
+import { canDrop, dropLabel, findDropArea, groupByName, type DropArea, type DropTarget } from "./dragDrop";
 import { todayLog } from "./activityLog";
 import TaskDonut from "./TaskDonut";
+import TaskForm, { type TaskPayload } from "./TaskForm";
 import TaskGroupPanel, { GroupChips } from "./TaskGroupPanel";
 import { filterTasks, groupSections, type GroupFilter } from "./taskGroups";
 import { deadlinePassed } from "./taskStats";
-import { buildTree, descendantIds, descendantSummary, type TaskRow } from "./taskTree";
 import { isDemo } from "./demo";
 import { askNotificationPermission, scheduleNotification } from "./notify";
 import { Button, Card, colors, Details, Hint, Input, Label, Row, Stars, Tabs, TimeField, s as ui } from "./ui";
 
 type Tab = "now" | "calendar";
-const levels: [Level, string][] = [["low", "低"], ["medium", "中"], ["high", "高"]];
 const conditions: [ConditionLevel, string][] = [
   ["slightly_tired", "少し疲れてる"],
   ["tired", "疲れてる"],
@@ -58,31 +57,20 @@ export default function Dashboard({ username, logout }: { username: string; logo
   const [tasks, setTasks] = useState<Task[]>([]);
   const [groups, setGroups] = useState<TaskGroup[]>([]);
   const [groupFilter, setGroupFilter] = useState<GroupFilter>("all");
-  const [groupId, setGroupId] = useState<number | null>(null);
   const [condition, setCondition] = useState<Condition | null>(null);
   const [aiConfigured, setAIConfigured] = useState(false);
   const [connected, setConnected] = useState(false);
   const [busy, setBusy] = useState(false);
   const lock = useRef(false);
   const scroll = useRef<ScrollView>(null);
-  // 編集・子の追加時に、スクロール領域からフォームの位置を測る。
+  // 編集時に、スクロール領域からフォームの位置を測る。
   const taskCard = useRef<View>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [title, setTitle] = useState("");
-  const [minutes, setMinutes] = useState("20");
-  const [deadlineDate, setDeadlineDate] = useState("");
-  const [deadlineTime, setDeadlineTime] = useState("");
-  const [priority, setPriority] = useState<Level>("medium");
-  const [concentration, setConcentration] = useState<Level>("medium");
-  const [place, setPlace] = useState("");
   const [editing, setEditing] = useState<number | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
-  // 一覧の行で「親を変更」を開いているタスク。
+  // 一覧の行で「グループを変更」を開いているタスク。
   const [moving, setMoving] = useState<number | null>(null);
-  const [parentId, setParentId] = useState<number | null>(null);
-  const [parentOpen, setParentOpen] = useState(false);
-  const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
   const [available, setAvailable] = useState("30");
   const [currentPlace, setCurrentPlace] = useState("");
   const [suggestions, setSuggestions] = useState<Suggestions | null>(null);
@@ -91,7 +79,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
   const [activities, setActivities] = useState<Activity[]>([]);
   // 「休む」を押したあと、休憩時間を選んでいる間だけ true。
   const [restOpen, setRestOpen] = useState(false);
-  // ドラッグで親を変える。落とし先の部品と、ドラッグ中の位置・候補を覚える。
+  // ドラッグでグループを変える。落とし先の部品と、ドラッグ中の位置・候補を覚える。
   const dropViews = useRef(new Map<string, { view: View; target: DropTarget }>());
   const dragging = useRef<{ taskId: number; areas: DropArea[]; scrollAt: number; captured: boolean; y: number; top: number; bottom: number } | null>(null);
   const [drag, setDrag] = useState<{ task: Task; key: string | null; label: string | null } | null>(null);
@@ -100,10 +88,10 @@ export default function Dashboard({ username, logout }: { username: string; logo
   const scrollBox = useRef<View>(null);
   const tasksRef = useRef<Task[]>([]);
   // 移動の直後だけ出す「元に戻す」。
-  // createdId は、名前で親を決めたときに新しく作った見出し（元に戻すときに空なら消す）。
-  const [undo, setUndo] = useState<{ text: string; taskId: number; parent_id: number | null; group_id: number | null; createdId?: number } | null>(null);
-  // 「親を変更」で入力中の親の名前。
-  const [parentName, setParentName] = useState("");
+  // createdGroupId は、名前を入れて新しく作ったグループ（元に戻すときに空なら消す）。
+  const [undo, setUndo] = useState<{ text: string; taskId: number; group_id: number | null; createdGroupId?: number } | null>(null);
+  // 「グループを変更」で入力中のグループ名。
+  const [groupName, setGroupName] = useState("");
   const [calendarLinked, setCalendarLinked] = useState(false);
   const [calendarReload, setCalendarReload] = useState(0);
   const [useCalendar, setUseCalendar] = useState(true);
@@ -203,7 +191,6 @@ export default function Dashboard({ username, logout }: { username: string; logo
     await loadActivities();
     setGroups(nextGroups);
     setGroupFilter(value => typeof value === "number" && !nextGroups.some(group => group.id === value) ? "all" : value);
-    setGroupId(value => value !== null && !nextGroups.some(group => group.id === value) ? null : value);
     setPlan(nextPlan);
     setNow(Date.now()); setReflections(nextReflections);
     setTasks(nextTasks); setCondition(nextCondition); setAIConfigured(config.ai_configured); setConnected(true); invalidate();
@@ -211,106 +198,65 @@ export default function Dashboard({ username, logout }: { username: string; logo
   useEffect(() => { void run(refresh); }, []);
 
   function changeTab(next: Tab) { setTab(next); scroll.current?.scrollTo({ y: 0, animated: false }); }
-  function resetForm() {
-    setEditing(null); setTitle(""); setMinutes("20"); setDeadlineDate(""); setDeadlineTime("");
-    setPriority("medium"); setConcentration("medium"); setPlace(""); setParentId(null); setParentOpen(false);
-    setGroupId(typeof groupFilter === "number" ? groupFilter : null);
-  }
+  function resetForm() { setEditing(null); }
   function scrollToForm() {
     const content = scroll.current?.getInnerViewNode();
     if (content) taskCard.current?.measureLayout(content, (_left, top) => scroll.current?.scrollTo({ y: top, animated: true }));
   }
-  function startEdit(task: Task) {
-    setEditing(task.id); setTitle(task.title); setMinutes(String(task.minutes)); setDeadlineDate(task.deadline?.slice(0, 10) ?? ""); setDeadlineTime(task.deadline?.slice(11, 16) ?? "");
-    setPriority(task.priority); setConcentration(task.concentration); setPlace(task.place);
-    setParentId(task.parent_id); setParentOpen(false);
-    setGroupId(task.group_id);
-    scrollToForm();
-  }
-  function startChild(task: Task) {
-    resetForm(); setParentId(task.id);
-    scrollToForm();
-  }
+  function startEdit(task: Task) { setEditing(task.id); scrollToForm(); }
   function integer(value: string) {
     if (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 1440) throw new Error("時間は1〜1440分の整数で入力してください。");
     return Number(value);
   }
-  async function saveTask() {
-    if (!title.trim()) throw new Error("タスク名を入力してください。");
-    const date = deadlineDate.trim(), time = deadlineTime.trim();
-    if (time && !date) throw new Error("締切の時刻を入れるときは、日付も入れてください。");
-    if (date && (!/^\d{4}-\d{2}-\d{2}$/.test(date) ||
-        Number.isNaN(Date.parse(date)) || new Date(date).toISOString().slice(0, 10) !== date)) {
-      throw new Error("締切の日付は 2026-11-05 のように、実在する日付で入力してください。");
-    }
-    if (time && !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) throw new Error("締切の時刻は 18:30 のように入力してください。");
-    const deadline = date ? (time ? `${date}T${time}` : date) : null;
-    const original = editingHeading ? tasks.find(task => task.id === editing) : null;
-    await api<Task>(editing === null ? "/tasks" : `/tasks/${editing}`, editing === null ? "POST" : "PUT", {
-      title: title.trim(), minutes: integer(minutes), deadline, priority, concentration, place: place.trim(), parent_id: parentId, group_id: groupId,
-      ...(original ? { minutes: original.minutes, deadline: original.deadline, priority: original.priority,
-        concentration: original.concentration, place: original.place } : {}),
-    });
+  // id が null なら追加、それ以外はそのタスクを更新する。
+  async function saveTask(value: TaskPayload, id: number | null) {
+    await api<Task>(id === null ? "/tasks" : `/tasks/${id}`, id === null ? "POST" : "PUT", value);
     setTasks(await api<Task[]>("/tasks"));
-    resetForm(); invalidate(); setNotice("タスクを保存しました。");
+    if (id !== null) resetForm();
+    invalidate(); setNotice(id === null ? `「${value.title}」を追加しました。` : "タスクを保存しました。");
   }
   async function toggleTask(task: Task) {
     await api<Task>(`/tasks/${task.id}`, "PATCH", { completed: !task.completed });
     setTasks(await api<Task[]>("/tasks")); invalidate();
   }
-  // 親・グループだけを変えて保存する（他の項目は今の値のまま送る）。
-  async function putPlace(task: Task, change: { parent_id: number | null; group_id: number | null }) {
+  // グループだけを変えて保存する（他の項目は今の値のまま送る）。
+  async function putGroup(task: Task, groupId: number | null) {
     await api<Task>(`/tasks/${task.id}`, "PUT", { title: task.title, minutes: task.minutes, deadline: task.deadline, priority: task.priority,
-      concentration: task.concentration, place: task.place, ...change });
+      concentration: task.concentration, place: task.place, group_id: groupId });
   }
-  async function moveTask(task: Task, target: DropTarget, change: { parent_id: number | null; group_id: number | null }) {
-    await putPlace(task, change);
-    setTasks(await api<Task[]>("/tasks")); invalidate();
-    const place = target.kind === "task" ? `「${tasks.find(value => value.id === target.id)?.title ?? "タスク"}」の下`
-      : target.name ? `「${target.name}」の最上位` : "最上位";
-    setUndo({ text: `「${task.title}」を${place}に移しました。`, taskId: task.id,
-      parent_id: task.parent_id, group_id: task.group_id });
-    setMoving(null);
+  async function moveTask(task: Task, target: DropTarget, createdGroupId?: number) {
+    await putGroup(task, target.groupId);
+    const [nextTasks, nextGroups] = await Promise.all([api<Task[]>("/tasks"), api<TaskGroup[]>("/groups")]);
+    setTasks(nextTasks); setGroups(nextGroups); invalidate(); setMoving(null);
+    setUndo({ text: createdGroupId === undefined ? `「${task.title}」を「${target.name}」に移しました。`
+      : `グループ「${target.name}」を作って「${task.title}」を入れました。`, taskId: task.id, group_id: task.group_id, createdGroupId });
   }
   async function undoMove(saved: NonNullable<typeof undo>) {
     const task = tasks.find(value => value.id === saved.taskId);
     if (!task) throw new Error("移したタスクが見つかりません。");
-    await putPlace(task, { parent_id: saved.parent_id, group_id: saved.group_id });
-    let nextTasks = await api<Task[]>("/tasks");
-    // 名前を入れて作った見出しが空になったら、一緒に消して元どおりにする。
-    if (saved.createdId !== undefined && !nextTasks.some(value => value.parent_id === saved.createdId)) {
-      await api(`/tasks/${saved.createdId}`, "DELETE");
-      nextTasks = await api<Task[]>("/tasks");
+    await putGroup(task, saved.group_id);
+    const nextTasks = await api<Task[]>("/tasks");
+    // 名前を入れて作ったグループが空になったら、一緒に消して元どおりにする。
+    if (saved.createdGroupId !== undefined && !nextTasks.some(value => value.group_id === saved.createdGroupId)) {
+      await api(`/groups/${saved.createdGroupId}`, "DELETE");
     }
-    setTasks(nextTasks); invalidate(); setNotice("元に戻しました。");
+    setTasks(nextTasks); setGroups(await api<TaskGroup[]>("/groups")); invalidate(); setNotice("元に戻しました。");
   }
-  // 入力した名前の見出しの下に入れる。同じ名前がなければ、その名前の見出しを新しく作る。
-  function nameMatch(task: Task, name: string) {
-    const inside = descendantIds(tasks, task.id);
-    const candidates = tasks.filter(value => value.id !== task.id && !inside.has(value.id) && value.title.trim() === name);
-    // 同じ名前が複数あるときは、見出し（子を持つもの）→ 未完了 の順で選ぶ。
-    const score = (value: Task) => (tasks.some(child => child.parent_id === value.id) ? 0 : 2) + (value.completed ? 1 : 0);
-    return candidates.sort((first, second) => score(first) - score(second))[0] ?? null;
-  }
+  // 入力した名前のグループに入れる。同じ名前がなければ、その名前のグループを新しく作る。
   async function moveByName(task: Task, text: string) {
     const name = text.trim();
-    if (!name) throw new Error("親の名前を入力してください。");
-    const found = nameMatch(task, name);
+    if (!name) throw new Error("グループ名を入力してください。");
+    const found = groupByName(groups, name);
     if (found) {
-      const change = dropChange(tasks, task.id, { kind: "task", id: found.id });
-      if (!change) throw new Error(`もう「${name}」の下に入っています。`);
-      await moveTask(task, { kind: "task", id: found.id }, change);
+      if (found.id === task.group_id) throw new Error(`もう「${name}」に入っています。`);
+      await moveTask(task, { groupId: found.id, name: found.name });
       return;
     }
-    // 見出しは題名だけを使う（時間などは表示しない）。グループは今のタスクに合わせる。
-    const heading = await api<Task>("/tasks", "POST", { title: name, minutes: 1, deadline: null, priority: "medium",
-      concentration: "medium", place: "", parent_id: null, group_id: task.group_id });
-    await putPlace(task, { parent_id: heading.id, group_id: heading.group_id });
-    setTasks(await api<Task[]>("/tasks")); invalidate(); setMoving(null);
-    setUndo({ text: `見出し「${name}」を作って「${task.title}」を入れました。`, taskId: task.id,
-      parent_id: task.parent_id, group_id: task.group_id, createdId: heading.id });
+    if (name.length > 30) throw new Error("グループ名は30文字以内にしてください。");
+    const created = await api<TaskGroup>("/groups", "POST", { name });
+    await moveTask(task, { groupId: created.id, name: created.name }, created.id);
   }
-  // 落とし先として登録する（一覧の行・グループ見出し・先頭の帯）。
+  // 落とし先として登録する（グループの見出し）。
   const dropArea = (key: string, target: DropTarget) => (view: View | null) => {
     if (view) dropViews.current.set(key, { view, target }); else dropViews.current.delete(key);
   };
@@ -322,7 +268,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
     ghostY.setValue(pageY - 30);
     setDrag({ task, key: null, label: null });
   }
-  // 持ち上げると先頭の帯が出て一覧がずれるため、表示が変わったあとで落とし先の位置を測る。
+  // 持ち上げたあとの表示で位置がずれることがあるため、描画後に落とし先の位置を測る。
   function measureDrop() {
     const state = dragging.current;
     if (!state) return;
@@ -339,12 +285,11 @@ export default function Dashboard({ username, logout }: { username: string; logo
     if (!state) return null;
     const shift = scrollY.current - state.scrollAt;
     const area = findDropArea(state.areas.map(value => ({ ...value, top: value.top - shift })), state.y);
-    const change = area ? dropChange(tasksRef.current, state.taskId, area.target) : null;
-    return area && change ? { area, change } : null;
+    return area && canDrop(tasksRef.current, state.taskId, area.target) ? area : null;
   }
   function showHover() {
     const hover = hoverDrop();
-    setDrag(value => value && { ...value, key: hover?.area.key ?? null, label: hover ? dropLabel(tasksRef.current, hover.area.target) : null });
+    setDrag(value => value && { ...value, key: hover?.key ?? null, label: hover ? dropLabel(hover.target) : null });
   }
   function moveDrag(pageY: number) {
     const state = dragging.current;
@@ -357,16 +302,12 @@ export default function Dashboard({ username, logout }: { username: string; logo
     const hover = drop ? hoverDrop() : null;
     const task = tasksRef.current.find(value => value.id === dragging.current?.taskId);
     dragging.current = null; setDrag(null);
-    if (hover && task) void run(() => moveTask(task, hover.area.target, hover.change));
+    if (hover && task) void run(() => moveTask(task, hover.target));
   }
   async function deleteTask(task: Task) {
-    const removed = new Set([task.id, ...descendantIds(tasks, task.id)]);
-    const reset = editing !== null && (removed.has(editing) || descendantIds(tasks, editing).has(task.id));
     await api(`/tasks/${task.id}`, "DELETE");
-    const nextTasks = await api<Task[]>("/tasks");
-    setTasks(nextTasks); setConfirmDelete(null); invalidate();
-    if (reset || (editing !== null && !nextTasks.some(value => value.id === editing))) resetForm();
-    else if (parentId !== null && !nextTasks.some(value => value.id === parentId)) setParentId(null);
+    setTasks(await api<Task[]>("/tasks")); setConfirmDelete(null); invalidate();
+    if (editing === task.id) resetForm();
     setNotice("タスクを削除しました。");
   }
   async function loadActivities() {
@@ -406,11 +347,8 @@ export default function Dashboard({ username, logout }: { username: string; logo
   const filtered = filterTasks(tasks, groupFilter);
   const open = filtered.filter(t => !t.completed);
   const done = filtered.filter(t => t.completed);
-  const tree = buildTree(tasks, compare), counts = new Map(tree.map(row => [row.task.id, row]));
-  const editingHeading = editing !== null && (counts.get(editing)?.childCount ?? 0) > 0;
-  const hiddenIds = new Set([...collapsed].flatMap(id => [...descendantIds(tasks, id)]));
-  const excluded = new Set(editing === null ? [] : [editing, ...descendantIds(tasks, editing)]);
-  const parent = tasks.find(task => task.id === parentId);
+  const editingTask = editing === null ? null : tasks.find(task => task.id === editing) ?? null;
+  const filterGroupId = typeof groupFilter === "number" ? groupFilter : null;
   const places = [...new Set(tasks.map(t => t.place.trim()).filter(Boolean))];
   const aiBlocked = !connected ? "サーバーに接続できていません。↻で再読み込みしてください。"
     : !aiConfigured ? "AI提案は準備中です。"
@@ -432,73 +370,51 @@ export default function Dashboard({ username, logout }: { username: string; logo
     });
   }
 
-  // 一覧の行の下に開く「どこに入れる？」。選ぶとすぐ移し、「元に戻す」を出す。
-  function parentPicker(task: Task) {
-    const roots: DropTarget[] = groups.length
-      ? [...groups.map(group => ({ kind: "root" as const, groupId: group.id, name: group.name })), { kind: "root", groupId: null, name: "未分類" }]
-      : [{ kind: "root", groupId: null, name: null }];
-    const choose = (target: DropTarget) => {
-      const change = dropChange(tasks, task.id, target);
-      if (change) void run(() => moveTask(task, target, change));
-    };
-    const inside = descendantIds(tasks, task.id);
-    const name = parentName.trim(), found = name ? nameMatch(task, name) : null;
-    // 入力中の文字を含む既存の名前を候補に出す（同じ名前は1つにまとめる）。
-    const suggestions = name ? [...new Set(tasks.filter(value => value.id !== task.id && !inside.has(value.id)
-      && value.title.includes(name) && value.title.trim() !== name).map(value => value.title.trim()))].slice(0, 5) : [];
+  // 一覧の行の下に開く「グループを変更」。名前を入れるか一覧から選ぶと、すぐ移して「元に戻す」を出す。
+  function groupPicker(task: Task) {
+    const name = groupName.trim(), found = name ? groupByName(groups, name) : null;
+    // 入力中の文字を含む既存のグループ名を候補に出す。
+    const similar = name ? groups.filter(group => group.name.includes(name) && group.name !== name).slice(0, 5) : [];
+    const choices: DropTarget[] = [...groups.map(group => ({ groupId: group.id, name: group.name })), { groupId: null, name: "未分類" }];
     return <View style={s.picker}>
-      <Hint>「{task.title}」を入れる親（見出し）の名前を決めてください。中のタスクも一緒に移ります。</Hint>
+      <Hint>「{task.title}」を入れるグループの名前を入れてください。ない名前なら新しく作ります。</Hint>
       <Row>
-        <View style={s.nameInput}><Input label="親の名前" hideLabel value={parentName} set={setParentName} placeholder="例：レポート課題" disabled={busy} maxLength={120} /></View>
-        <Button small primary title="決定" disabled={busy || !name} onPress={() => void run(() => moveByName(task, parentName))} />
+        <View style={s.nameInput}><Input label="グループ名" hideLabel value={groupName} set={setGroupName} placeholder="例：レポート課題" disabled={busy} maxLength={30} /></View>
+        <Button small primary title="決定" disabled={busy || !name || found?.id === task.group_id} onPress={() => void run(() => moveByName(task, groupName))} />
       </Row>
-      {!!name && <Hint>{found ? `「${found.title}」の下に入れます` : `新しい見出し「${name}」を作って入れます`}</Hint>}
-      {!!suggestions.length && <Row>{suggestions.map(value => <Button key={value} small title={value} disabled={busy} onPress={() => setParentName(value)} />)}</Row>}
-      <Label>または一覧から選ぶ</Label>
-      <ScrollView style={s.pickerList} contentContainerStyle={{ gap: 6 }} nestedScrollEnabled>
-        <Row>{roots.map(target => <Button key={String(target.kind === "root" ? target.groupId : "")} small
-          title={target.kind === "root" && target.name ? `最上位（${target.name}）` : "なし（最上位）"}
-          selected={task.parent_id === null && target.kind === "root" && task.group_id === target.groupId}
-          disabled={busy || !dropChange(tasks, task.id, target)} onPress={() => choose(target)} />)}</Row>
-        {tree.filter(row => row.task.id !== task.id && !inside.has(row.task.id)).map(({ task: candidate, depth }) =>
-          <View key={candidate.id} style={{ marginLeft: Math.min(depth, 4) * 16 }}>
-            <Button small title={`${candidate.title}${candidate.completed ? "（完了済み）" : ""}の下`} selected={candidate.id === task.parent_id}
-              disabled={busy || candidate.id === task.parent_id} onPress={() => choose({ kind: "task", id: candidate.id })} />
-          </View>)}
-      </ScrollView>
+      {!!name && <Hint>{found ? found.id === task.group_id ? `もう「${found.name}」に入っています` : `「${found.name}」に入れます` : `新しいグループ「${name}」を作って入れます`}</Hint>}
+      {!!similar.length && <Row>{similar.map(group => <Button key={group.id} small title={group.name} disabled={busy} onPress={() => setGroupName(group.name)} />)}</Row>}
+      <Label>または選ぶ</Label>
+      <Row>{choices.map(target => <View key={String(target.groupId)} style={{ maxWidth: "100%" }}>
+        <Button small title={target.name} selected={task.group_id === target.groupId}
+          disabled={busy || task.group_id === target.groupId} onPress={() => void run(() => moveTask(task, target))} />
+      </View>)}</Row>
       <Row><Button small title="やめる" disabled={busy} onPress={() => setMoving(null)} /></Row>
     </View>;
   }
 
   // 描画のたびに部品を作り直さないよう、関数として呼び出す。
-  function taskRow({ task, depth }: TaskRow, draggable = false) {
-    if (hiddenIds.has(task.id)) return null;
-    const { childCount, doneChildCount } = counts.get(task.id)!;
-    const summary = childCount > 0 ? descendantSummary(tasks, task.id) : null;
-    const folded = collapsed.has(task.id);
-    const missingParent = depth === 0 ? tasks.find(parent => parent.id === task.parent_id) : null;
+  function taskRow(task: Task, draggable = false) {
     const meta = [`${task.minutes}分`, task.place].filter(Boolean).join(" · ");
-    const due = !summary && task.deadline && !task.completed ? deadlineLabel(task.deadline, now) : null;
-    return <View key={task.id} ref={draggable ? dropArea(`task:${task.id}`, { kind: "task", id: task.id }) : undefined}
-      style={[s.taskRow, { marginLeft: Math.min(depth, 4) * 16 }, drag?.key === `task:${task.id}` && s.dropHover, drag?.task.id === task.id && s.dragging]}>
+    const due = task.deadline && !task.completed ? deadlineLabel(task.deadline, now) : null;
+    // 絞り込みなしでグループ見出しがないときは、どのグループかを行に出す。
+    const group = !draggable && groupFilter === "all" ? groups.find(value => value.id === task.group_id) : null;
+    return <View key={task.id} style={[s.taskRow, drag?.task.id === task.id && s.dragging]}>
       <Pressable accessibilityRole="button" accessibilityLabel={`${task.title}を編集`} disabled={busy}
-        accessibilityHint={draggable && !isDemo ? "長押ししてドラッグすると親を変更できます" : undefined}
+        accessibilityHint={draggable && !isDemo ? "長押ししてグループの見出しに離すと、グループを変更できます" : undefined}
         onPress={() => startEdit(task)} delayLongPress={300}
         onLongPress={draggable ? event => startDrag(task, event.nativeEvent.pageY) : undefined}
         // 長押しのあと動かさずに離したら、ドラッグをやめる。
         onPressOut={() => setTimeout(() => { if (dragging.current && !dragging.current.captured) endDrag(false); }, 50)}
         style={[s.taskBody, Platform.OS === "web" && draggable && noSelect]}>
-        <Text style={[s.taskTitle, summary && s.headingTitle, task.completed && s.done]}>{task.title}</Text>
+        <Text style={[s.taskTitle, task.completed && s.done]}>{task.title}</Text>
         <View style={s.metaRow}>
           {due && <Text style={[s.due, due[1] === "over" ? s.dueOver : due[1] === "soon" ? s.dueSoon : null]}>{due[0]}</Text>}
-          {!summary && task.completed && !!task.deadline && <Text style={ui.hint}>締切 {shortDate(task.deadline)}{task.deadline.slice(10).replace("T", " ")}</Text>}
-          {!summary && <Text style={ui.hint}>{meta}</Text>}
-          {summary && summary.minutes > 0 && <Text style={ui.hint}>残り{summary.minutes}分</Text>}
-          {summary?.deadline && <Text style={ui.hint}>最短締切 {shortDate(summary.deadline)}</Text>}
-          {missingParent && <Text style={ui.hint}>↳ {missingParent.title}</Text>}
-          {!summary && task.priority === "high" && <Text style={s.badge}>優先</Text>}
-          {!summary && task.concentration === "high" && <Text style={s.badge}>集中</Text>}
-          {childCount > 0 && <Text style={s.badge}>子 {doneChildCount}/{childCount}完了</Text>}
+          {task.completed && !!task.deadline && <Text style={ui.hint}>締切 {shortDate(task.deadline)}{task.deadline.slice(10).replace("T", " ")}</Text>}
+          <Text style={ui.hint}>{meta}</Text>
+          {group && <Text style={ui.hint}>🏷 {group.name}</Text>}
+          {task.priority === "high" && <Text style={s.badge}>優先</Text>}
+          {task.concentration === "high" && <Text style={s.badge}>集中</Text>}
         </View>
       </Pressable>
       <Row>
@@ -507,23 +423,16 @@ export default function Dashboard({ username, logout }: { username: string; logo
             onPress={() => void run(() => deleteTask(task))} />
           <Button small title="やめる" disabled={busy} onPress={() => setConfirmDelete(null)} />
         </> : <>
-        {childCount > 0 && <Pressable accessibilityRole="button" accessibilityState={{ expanded: !folded }}
-          accessibilityLabel={`${task.title}の子タスクを${folded ? "表示" : "隠す"}`} disabled={busy}
-          style={s.treeToggle} onPress={() => setCollapsed(previous => {
-            const next = new Set(previous); if (next.has(task.id)) next.delete(task.id); else next.add(task.id); return next;
-          })}><Text style={s.taskTitle}>{folded ? "▸" : "▾"}</Text></Pressable>}
-        <Button small title="＋子" label={`${task.title}に子タスクを追加`} disabled={busy} onPress={() => startChild(task)} />
-        {childCount === 0 && <Button small title={task.completed ? "戻す" : "✓ 完了"}
+        <Button small title={task.completed ? "戻す" : "✓ 完了"}
           label={`${task.title}を${task.completed ? "未完了に戻す" : "完了にする"}`} disabled={busy}
-          onPress={() => void run(() => toggleTask(task))} />}
-        <Button small title={moving === task.id ? "▾ 親を変更" : "親を変更"} label={`${task.title}の親を変更`} selected={moving === task.id}
-          disabled={busy || isDemo} onPress={() => { setMoving(moving === task.id ? null : task.id); setConfirmDelete(null); setParentName(""); }} />
+          onPress={() => void run(() => toggleTask(task))} />
+        <Button small title={moving === task.id ? "▾ グループを変更" : "グループを変更"} label={`${task.title}のグループを変更`} selected={moving === task.id}
+          disabled={busy || isDemo} onPress={() => { setMoving(moving === task.id ? null : task.id); setConfirmDelete(null); setGroupName(""); }} />
         <Button small title="削除" label={`${task.title}を削除`} disabled={busy || isDemo}
           onPress={() => { setConfirmDelete(task.id); setMoving(null); }} />
         </>}
       </Row>
-      {confirmDelete === task.id && childCount > 0 && <Hint>中のタスク {descendantIds(tasks, task.id).size}件も削除されます</Hint>}
-      {moving === task.id && parentPicker(task)}
+      {moving === task.id && groupPicker(task)}
     </View>;
   }
 
@@ -640,76 +549,28 @@ export default function Dashboard({ username, logout }: { username: string; logo
         <View ref={taskCard} style={[s.stack, wide && s.column]}>
           {/* やること：追加・編集フォームと一覧を1枚にまとめる */}
           <View>
-          <Card title={editing === null ? `やること ${open.length}件` : editingHeading ? "見出しを編集" : "タスクを編集"}>
-            {editing === null && parent && <Label>「{parent.title}」の下に追加</Label>}
-            <Hint>親：{parent?.title ?? (parentId === null ? "なし（最上位）" : "見つからないタスク")}</Hint>
-            <Row>
-              {parentId !== null && <Button small title="外す" label="親タスクを外す" disabled={busy} onPress={() => setParentId(null)} />}
-              <Button small title="親を変更" disabled={busy} onPress={() => setParentOpen(value => !value)} />
-            </Row>
-            <Details title="親タスクの候補" open={parentOpen} onToggle={setParentOpen}>
-              <Button small title="なし（最上位）" selected={parentId === null} disabled={busy}
-                onPress={() => { setParentId(null); setParentOpen(false); }} />
-              {tree.filter(row => !excluded.has(row.task.id)).map(({ task, depth }) =>
-                <View key={task.id} style={{ marginLeft: Math.min(depth, 4) * 16 }}>
-                  <Button small title={`${task.title}${task.completed ? "（完了済み）" : ""}`} selected={parentId === task.id}
-                    disabled={busy} onPress={() => { setParentId(task.id); setParentOpen(false); }} />
-                </View>)}
-            </Details>
-            {parent?.completed && <Hint>未完了の子タスクを追加・移動すると、親も未完了に戻ります。</Hint>}
-            {parentId !== null ? <Hint>グループ：親と同じ（{groups.find(group => group.id === parent?.group_id)?.name ?? "未分類"}）</Hint> : <>
-              <Label>グループ</Label>
-              <GroupChips groups={groups} value={groupId} disabled={busy} set={value => setGroupId(value === "all" ? null : value)} />
-            </>}
-            <Input label={editingHeading ? "題名" : "タスク名"} hideLabel value={title} set={setTitle} placeholder={editingHeading ? "見出しの題名" : "タスク名（例：レポートの下書き）"} disabled={busy} />
-            {!editingHeading && <>
-            <Label>かかる時間</Label>
-            <Row>
-              <View style={s.minutesInput}><Input label="かかる時間（分）" hideLabel value={minutes} set={setMinutes} numeric placeholder="分" disabled={busy} /></View>
-              <Text style={ui.hint}>分</Text>
-            </Row>
-            <Label>締切（なくてもOK・時刻は省略可）</Label>
-            <Row>
-              <TimeField kind="date" label="締切の日付" value={deadlineDate} set={setDeadlineDate} disabled={busy} />
-              <TimeField label="締切の時刻" value={deadlineTime} set={setDeadlineTime} disabled={busy} />
-              {!!(deadlineDate || deadlineTime) && <Button small title="消す" label="締切を消す" disabled={busy}
-                onPress={() => { setDeadlineDate(""); setDeadlineTime(""); }} />}
-            </Row>
-            <Label>優先度</Label><Row>{levels.map(([key, text]) => <Button key={key} small title={text}
-              selected={priority === key} disabled={busy} onPress={() => setPriority(key)} />)}</Row>
-            <Label>必要な集中度</Label><Row>{levels.map(([key, text]) => <Button key={key} small title={text}
-              selected={concentration === key} disabled={busy} onPress={() => setConcentration(key)} />)}</Row>
-            <Input label="場所（空欄ならどこでも）" value={place} set={setPlace} placeholder="例：自宅" disabled={busy} />
-            </>}
-            <Row><Button primary title={editing === null ? "追加" : "保存"} disabled={busy || !connected} onPress={() => void run(saveTask)} />
-              {editing !== null && <Button title="やめる" disabled={busy} onPress={resetForm} />}</Row>
+          <Card title={editingTask ? "タスクを編集" : `やること ${open.length}件`}>
+            <TaskForm key={editingTask?.id ?? "new"} task={editingTask} groups={groups} defaultGroupId={filterGroupId}
+              disabled={busy || !connected} run={run} save={value => saveTask(value, editingTask?.id ?? null)}
+              cancel={editingTask ? resetForm : undefined} />
             {!tasks.length && <Hint>まだタスクがありません。上の欄から追加しましょう。</Hint>}
             <Label>グループで絞り込み</Label>
             <GroupChips groups={groups} value={groupFilter} all unclassified={tasks.some(task => task.group_id === null)}
-              disabled={busy} set={value => {
-                setGroupFilter(value);
-                if (editing === null && parentId === null) setGroupId(typeof value === "number" ? value : null);
-              }} />
+              disabled={busy} set={setGroupFilter} />
             <TaskDonut tasks={filtered} now={now} />
-            {groupFilter === "all" && groups.length > 0 ? groupSections(open, groups).map(section =>
+            {groupFilter === "all" && groups.length > 0 ? groupSections(open.slice().sort(compare), groups).map(section =>
               <View key={String(section.id)} style={{ gap: 6 }}>
-                <View ref={dropArea(`group:${section.id}`, { kind: "group", groupId: section.id, name: section.name })}
+                <View ref={dropArea(`group:${section.id}`, { groupId: section.id, name: section.name })}
                   style={[s.dropHeader, drag?.key === `group:${section.id}` && s.dropHover]}>
                   <Label>{section.name}・未完了 {section.tasks.length}件</Label>
                 </View>
-                {section.tasks.length ? buildTree(section.tasks, compare).map(row => taskRow(row, true)) : <Hint>タスクはありません</Hint>}
-              </View>) : <>
-                {drag && <View ref={dropArea("root", { kind: "root", groupId: typeof groupFilter === "number" ? groupFilter : null,
-                  name: typeof groupFilter === "number" ? groups.find(group => group.id === groupFilter)?.name ?? null : null })}
-                  style={[s.rootBand, drag.key === "root" && s.dropHover]}><Hint>ここに離すと最上位に移動</Hint></View>}
-                {buildTree(open, compare).map(row => taskRow(row, true))}
-              </>}
-            {open.length > 1 && !isDemo && <Hint>「親を変更」か、長押しして別のタスクの上に離すと、そのタスクの下に移せます</Hint>}
+                {section.tasks.length ? section.tasks.map(task => taskRow(task, true)) : <Hint>タスクはありません</Hint>}
+              </View>) : open.slice().sort(compare).map(task => taskRow(task))}
+            {groupFilter === "all" && groups.length > 0 && open.length > 0 && !isDemo && <Hint>「グループを変更」か、長押ししてグループの見出しに離すと、グループを移せます</Hint>}
             {!!done.length && <Details title={`完了済み（${done.length}件）`}>
-              {buildTree(done, compare).map(row => taskRow(row))}
+              {done.slice().sort(compare).map(task => taskRow(task))}
             </Details>}
             {!!tasks.length && <Hint>タスク名を押すと編集できます</Hint>}
-            {tree.some(row => row.childCount > 0) && <Hint>見出しは、中のタスクをすべて完了すると自動で完了します</Hint>}
             <TaskGroupPanel groups={groups} disabled={busy || !connected || isDemo} run={run} changed={refresh} />
           </Card>
           </View>
@@ -720,6 +581,11 @@ export default function Dashboard({ username, logout }: { username: string; logo
       <View style={[s.stack, hidden("calendar")]}>
         <CalendarPanel disabled={busy || !connected} run={run} reload={calendarReload}
           changed={linked => { setCalendarLinked(linked); invalidate(); }} />
+        {/* 予定を見ながらタスクも足せるようにする（一覧はホームに出る） */}
+        <Card title="タスクを追加" right={<Hint>未完了 {tasks.filter(task => !task.completed).length}件</Hint>}>
+          <TaskForm groups={groups} disabled={busy || !connected} run={run} save={value => saveTask(value, null)} />
+          <Hint>追加したタスクはホームの「やること」に表示されます</Hint>
+        </Card>
       </View>
 
     </ScrollView>
@@ -780,13 +646,11 @@ const s = StyleSheet.create({
   error: { padding: 12, backgroundColor: "#fff0ed", color: "#9a2920", borderRadius: 10 },
   notice: { padding: 12, backgroundColor: "#deeee4", color: "#234e3d", borderRadius: 10 },
   taskRow: { gap: 6, borderTopWidth: 1, borderColor: colors.line, paddingVertical: 8 },
-  treeToggle: { minWidth: 44, minHeight: 44, alignItems: "center", justifyContent: "center" },
   taskBody: { minWidth: 0, minHeight: 44, justifyContent: "center", gap: 2, paddingVertical: 6 },
   taskTitle: { fontSize: 16, color: "#243e33", fontWeight: "600" }, done: { textDecorationLine: "line-through", color: "#738179" },
-  headingTitle: { fontSize: 18, fontWeight: "700" },
   metaRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6 },
-  badge: { fontSize: 11, fontWeight: "700", color: colors.primary, backgroundColor: colors.soft, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, overflow: "hidden" },
   minutesInput: { width: 90 },
+  badge: { fontSize: 11, fontWeight: "700", color: colors.primary, backgroundColor: colors.soft, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, overflow: "hidden" },
   due: { fontSize: 12, fontWeight: "700", color: colors.text, backgroundColor: colors.line, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, overflow: "hidden" },
   dueSoon: { color: "#8a4b00", backgroundColor: "#fdecc8" },
   dueOver: { color: "#9a2920", backgroundColor: "#fde2dd" },
@@ -795,12 +659,10 @@ const s = StyleSheet.create({
   rest: { backgroundColor: "#f4f1ea" },
   scrollBox: { flex: 1 },
   picker: { gap: 8, padding: 12, borderRadius: 10, backgroundColor: colors.soft },
-  pickerList: { maxHeight: 260 },
   nameInput: { flex: 1, minWidth: 160 },
   dropHover: { borderColor: colors.primary, borderWidth: 2, backgroundColor: colors.soft, borderRadius: 10 },
   dragging: { opacity: 0.4 },
   dropHeader: { paddingVertical: 4, paddingHorizontal: 4 },
-  rootBand: { padding: 12, borderWidth: 1, borderStyle: "dashed", borderColor: colors.border, borderRadius: 10, alignItems: "center" },
   ghost: { position: "absolute", top: 0, left: 16, right: 16, padding: 12, gap: 2, borderRadius: 12, backgroundColor: "white", opacity: 0.95,
     borderWidth: 2, borderColor: colors.primary, shadowColor: "#000", shadowOpacity: 0.2, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 10 },
   ghostLabel: { fontSize: 13, fontWeight: "700", color: colors.primary },

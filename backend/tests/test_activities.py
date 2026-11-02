@@ -55,16 +55,13 @@ class ActivityCases:
         self.assertGreater(datetime.fromisoformat(extended["ends_at"]), datetime.fromisoformat(started["ends_at"]))
         self.assertIsNone(extended["outcome"])
 
-    def test_activity_finish_completes_task_and_ancestors(self):
-        heading = self.activity_task(title="見出し")
-        child = self.activity_task(parent_id=heading["id"])
-        started = self.activity_start(child["id"])
+    def test_activity_finish_completes_task(self):
+        task = self.activity_task()
+        started = self.activity_start(task["id"])
         response = self.activity_action(started, "finish")
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["outcome"], "done")
-        tasks = self.activity_tasks()
-        self.assertTrue(tasks[child["id"]]["completed"])
-        self.assertTrue(tasks[heading["id"]]["completed"])
+        self.assertTrue(self.activity_tasks()[task["id"]]["completed"])
 
     def test_activity_partial_and_stop_keep_task_open(self):
         for action, outcome in [("partial", "partial"), ("stop", "stopped")]:
@@ -83,14 +80,6 @@ class ActivityCases:
         self.assertEqual(history[first["id"]]["outcome"], "stopped")
         self.assertIsNone(history[second["id"]]["outcome"])
         self.assertEqual(self.client.get("/api/activities/current").json()["id"], second["id"])
-
-    def test_activity_heading_cannot_be_chosen(self):
-        heading = self.activity_task()
-        self.activity_task(parent_id=heading["id"])
-        self.assertEqual(self.client.put("/api/condition", json={"level": "normal"}).status_code, 200)
-        response = self.client.post("/api/activities", json={"task_id": heading["id"]})
-        self.assertEqual(response.status_code, 409)
-        self.assertEqual(response.json()["detail"], "見出しは選べません")
 
     def test_activity_finished_is_409_and_other_users_404(self):
         started = self.activity_start(self.activity_task()["id"])
