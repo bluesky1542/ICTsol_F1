@@ -21,6 +21,16 @@ test("混在時の完了率を四捨五入し、入力を変更しない", () =>
   assert.equal(taskStats([task(true), task(true), task()], now).rate, 67);
 });
 
+test("未完了が残る199/200件の完了率は99%に収める", () => {
+  const tasks = [...Array.from({ length: 199 }, () => task(true)), task()];
+  assert.deepEqual(taskStats(tasks, now), { total: 200, done: 199, open: 1, overdue: 0, rate: 99 });
+});
+
+test("完了がある1/300件の完了率は1%に収める", () => {
+  const tasks = [task(true), ...Array.from({ length: 299 }, () => task())];
+  assert.deepEqual(taskStats(tasks, now), { total: 300, done: 1, open: 299, overdue: 0, rate: 1 });
+});
+
 test("未完了だけを締切切れとして数え、締切なしと完了済みを除く", () => {
   const tasks = [task(false, "2026-11-01"), task(false, "2026-11-02T11:59"),
     task(true, "2026-11-01"), task(true, "2026-11-02T11:59"), task(),

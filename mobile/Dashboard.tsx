@@ -10,7 +10,7 @@ import { isDemo } from "./demo";
 import { askNotificationPermission, scheduleNotification } from "./notify";
 import { Button, Card, colors, Details, Hint, Input, Label, Row, Stars, Tabs, TimeField, s as ui } from "./ui";
 
-type Tab = "now" | "stats" | "calendar";
+type Tab = "now" | "calendar";
 const levels: [Level, string][] = [["low", "低"], ["medium", "中"], ["high", "高"]];
 const conditions: [ConditionLevel, string][] = [
   ["slightly_tired", "少し疲れてる"],
@@ -249,7 +249,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
           onPress={() => void run(async () => { await refresh(); setCalendarReload(n => n + 1); })} />
         <Button small title="ログアウト" disabled={busy} onPress={() => void run(logout)} />
       </View>
-      <Tabs tabs={[["now", "ホーム"], ["stats", "ダッシュボード"], ["calendar", "カレンダー"]]}
+      <Tabs tabs={[["now", "ホーム"], ["calendar", "カレンダー"]]}
         value={tab} set={changeTab} />
       {isDemo && <Hint>デモ画面です（保存・AIは動きません）</Hint>}
       {!!error && <Text accessibilityRole="alert" style={s.error}>{error}</Text>}
@@ -352,6 +352,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
             <Row><Button primary title={editing === null ? "追加" : "保存"} disabled={busy || !connected} onPress={() => void run(saveTask)} />
               {editing !== null && <Button title="やめる" disabled={busy} onPress={resetForm} />}</Row>
             {!tasks.length && <Hint>まだタスクがありません。上の欄から追加しましょう。</Hint>}
+            <TaskDonut tasks={tasks} now={now} />
             {open.map(taskRow)}
             {!!done.length && <Details title={`完了済み（${done.length}件）`}>
               {done.map(taskRow)}
@@ -360,10 +361,6 @@ export default function Dashboard({ username, logout }: { username: string; logo
           </Card>
           </View>
         </View>
-      </View>
-
-      <View style={[s.stack, hidden("stats")]}>
-        <TaskDonut tasks={tasks} now={now} />
       </View>
 
       {/* 予定：常に読み込んだままにし、連携状態をホームでも使う */}
