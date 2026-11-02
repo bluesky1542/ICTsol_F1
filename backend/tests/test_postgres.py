@@ -16,10 +16,11 @@ from app.database import database
 from app.main import app
 from app.usage import reserve_ai_call
 from test_task_tree import TaskTreeCases
+from test_task_groups import TaskGroupCases
 
 
 @unittest.skipUnless(os.getenv("TEST_DATABASE_URL"), "PostgreSQLのテスト用DBは未設定")
-class PostgresTest(TaskTreeCases, unittest.TestCase):
+class PostgresTest(TaskTreeCases, TaskGroupCases, unittest.TestCase):
     def setUp(self):
         url = os.environ["TEST_DATABASE_URL"]
         if urlsplit(url).path != "/ictsol_test":

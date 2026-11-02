@@ -2,9 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { Animated, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
-import { Achievement, Activity, api, Condition, ConditionLevel, Level, Reflection, Suggestions, Task, WorkPlan } from "./api";
+import { Achievement, Activity, api, Condition, ConditionLevel, Level, Reflection, Suggestions, Task, TaskGroup, WorkPlan } from "./api";
 import CalendarPanel from "./CalendarPanel";
 import TaskDonut from "./TaskDonut";
+import TaskGroupPanel, { GroupChips } from "./TaskGroupPanel";
+import { filterTasks, groupSections, type GroupFilter } from "./taskGroups";
 import { deadlinePassed } from "./taskStats";
 import { buildTree, descendantIds, type TaskRow } from "./taskTree";
 import { isDemo } from "./demo";
@@ -51,6 +53,9 @@ function deadlineLabel(deadline: string, now: number): [string, "over" | "soon" 
 export default function Dashboard({ username, logout }: { username: string; logout: () => Promise<void> }) {
   const [tab, setTab] = useState<Tab>("now");
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [groups, setGroups] = useState<TaskGroup[]>([]);
+  const [groupFilter, setGroupFilter] = useState<GroupFilter>("all");
+  const [groupId, setGroupId] = useState<number | null>(null);
   const [condition, setCondition] = useState<Condition | null>(null);
   const [aiConfigured, setAIConfigured] = useState(false);
   const [connected, setConnected] = useState(false);
@@ -139,10 +144,14 @@ export default function Dashboard({ username, logout }: { username: string; logo
   }
   function invalidate() { setSuggestions(null); setSelected(null); }
   async function refresh() {
-    const [nextTasks, nextCondition, config, nextReflections, nextPlan] = await Promise.all([
+    const [nextTasks, nextCondition, config, nextReflections, nextPlan, nextGroups] = await Promise.all([
       api<Task[]>("/tasks"), api<Condition | null>("/condition"), api<{ ai_configured: boolean }>("/config"),
       api<Reflection[]>("/reflections"), api<WorkPlan | null>("/reflections/plan"),
+      api<TaskGroup[]>("/groups"),
     ]);
+    setGroups(nextGroups);
+    setGroupFilter(value => typeof value === "number" && !nextGroups.some(group => group.id === value) ? "all" : value);
+    setGroupId(value => value !== null && !nextGroups.some(group => group.id === value) ? null : value);
     setPlan(nextPlan);
     setNow(Date.now()); setReflections(nextReflections);
     setTasks(nextTasks); setCondition(nextCondition); setAIConfigured(config.ai_configured); setConnected(true); invalidate();
@@ -153,6 +162,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
   function resetForm() {
     setEditing(null); setTitle(""); setMinutes("20"); setDeadlineDate(""); setDeadlineTime("");
     setPriority("medium"); setConcentration("medium"); setPlace(""); setParentId(null); setParentOpen(false);
+    setGroupId(typeof groupFilter === "number" ? groupFilter : null);
   }
   function scrollToForm() {
     const content = scroll.current?.getInnerViewNode();
@@ -162,6 +172,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
     setEditing(task.id); setTitle(task.title); setMinutes(String(task.minutes)); setDeadlineDate(task.deadline?.slice(0, 10) ?? ""); setDeadlineTime(task.deadline?.slice(11, 16) ?? "");
     setPriority(task.priority); setConcentration(task.concentration); setPlace(task.place);
     setParentId(task.parent_id); setParentOpen(false);
+    setGroupId(task.group_id);
     scrollToForm();
   }
   function startChild(task: Task) {
@@ -183,7 +194,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
     if (time && !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) throw new Error("締切の時刻は 18:30 のように入力してください。");
     const deadline = date ? (time ? `${date}T${time}` : date) : null;
     await api<Task>(editing === null ? "/tasks" : `/tasks/${editing}`, editing === null ? "POST" : "PUT", {
-      title: title.trim(), minutes: integer(minutes), deadline, priority, concentration, place: place.trim(), parent_id: parentId,
+      title: title.trim(), minutes: integer(minutes), deadline, priority, concentration, place: place.trim(), parent_id: parentId, group_id: groupId,
     });
     setTasks(await api<Task[]>("/tasks"));
     resetForm(); invalidate(); setNotice("タスクを保存しました。");
@@ -208,8 +219,9 @@ export default function Dashboard({ username, logout }: { username: string; logo
     setNotice("今日の振り返りを保存しました。おつかれさまでした。");
   }
   const compare = (first: Task, second: Task) => deadlineKey(first.deadline).localeCompare(deadlineKey(second.deadline));
-  const open = tasks.filter(t => !t.completed);
-  const done = tasks.filter(t => t.completed);
+  const filtered = filterTasks(tasks, groupFilter);
+  const open = filtered.filter(t => !t.completed);
+  const done = filtered.filter(t => t.completed);
   const tree = buildTree(tasks, compare), counts = new Map(tree.map(row => [row.task.id, row]));
   const hiddenIds = new Set([...collapsed].flatMap(id => [...descendantIds(tasks, id)]));
   const excluded = new Set(editing === null ? [] : [editing, ...descendantIds(tasks, editing)]);
@@ -377,6 +389,10 @@ export default function Dashboard({ username, logout }: { username: string; logo
                 </View>)}
             </Details>
             {parent?.completed && <Hint>未完了の子タスクを追加・移動すると、親も未完了に戻ります。</Hint>}
+            {parentId !== null ? <Hint>グループ：親と同じ（{groups.find(group => group.id === parent?.group_id)?.name ?? "未分類"}）</Hint> : <>
+              <Label>グループ</Label>
+              <GroupChips groups={groups} value={groupId} disabled={busy} set={value => setGroupId(value === "all" ? null : value)} />
+            </>}
             <Input label="タスク名" hideLabel value={title} set={setTitle} placeholder="タスク名（例：レポートの下書き）" disabled={busy} />
             <Label>かかる時間</Label>
             <Row>
@@ -398,13 +414,24 @@ export default function Dashboard({ username, logout }: { username: string; logo
             <Row><Button primary title={editing === null ? "追加" : "保存"} disabled={busy || !connected} onPress={() => void run(saveTask)} />
               {editing !== null && <Button title="やめる" disabled={busy} onPress={resetForm} />}</Row>
             {!tasks.length && <Hint>まだタスクがありません。上の欄から追加しましょう。</Hint>}
-            <TaskDonut tasks={tasks} now={now} />
-            {buildTree(open, compare).map(taskRow)}
+            <Label>グループで絞り込み</Label>
+            <GroupChips groups={groups} value={groupFilter} all unclassified={tasks.some(task => task.group_id === null)}
+              disabled={busy} set={value => {
+                setGroupFilter(value);
+                if (editing === null && parentId === null) setGroupId(typeof value === "number" ? value : null);
+              }} />
+            <TaskDonut tasks={filtered} now={now} />
+            {groupFilter === "all" && groups.length > 0 ? groupSections(open, groups).map(section =>
+              <View key={String(section.id)} style={{ gap: 6 }}>
+                <Label>{section.name}・未完了 {section.tasks.length}件</Label>
+                {section.tasks.length ? buildTree(section.tasks, compare).map(taskRow) : <Hint>タスクはありません</Hint>}
+              </View>) : buildTree(open, compare).map(taskRow)}
             {!!done.length && <Details title={`完了済み（${done.length}件）`}>
               {buildTree(done, compare).map(taskRow)}
             </Details>}
             {!!tasks.length && <Hint>タスク名を押すと編集できます</Hint>}
             {tree.some(row => row.childCount > 0) && <Hint>子をすべて完了すると自動で完了します</Hint>}
+            <TaskGroupPanel groups={groups} disabled={busy || !connected || isDemo} run={run} changed={refresh} />
           </Card>
           </View>
         </View>

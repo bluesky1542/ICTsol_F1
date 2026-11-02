@@ -3,8 +3,9 @@ import { demoResponse, isDemo } from "./demo";
 
 export type Level = "low" | "medium" | "high";
 export type ConditionLevel = "good" | "slightly_good" | "normal" | "slightly_tired" | "tired";
+export type TaskGroup = { id: number; name: string };
 export type Task = {
-  id: number; parent_id: number | null; title: string; minutes: number; deadline: string | null;
+  id: number; parent_id: number | null; group_id: number | null; title: string; minutes: number; deadline: string | null;
   priority: Level; concentration: Level; place: string; completed: boolean;
 };
 export type Condition = { level: ConditionLevel; updated_at: string; expires_at: string };
@@ -53,6 +54,7 @@ export async function api<T>(path: string, method = "GET", body?: unknown): Prom
       headers: { ...(body === undefined ? {} : { "Content-Type": "application/json" }), ...(requestToken ? { Authorization: `Bearer ${requestToken}` } : {}) },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
+    if (response.status === 204) return undefined as T;
     // サーバーの起動中などはJSON以外（HTMLのエラーページ）が返るため、読めなくても落ちないようにする。
     const data = await response.json().catch(() => UNREADABLE);
     if (response.status === 401 && requestToken && requestToken === token) {

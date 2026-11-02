@@ -125,7 +125,17 @@ def initialize():
         elif "parent_id" not in {row[1] for row in db.execute("PRAGMA table_info(tasks)")}:
             db.execute("ALTER TABLE tasks ADD COLUMN parent_id INTEGER")
         db.execute("CREATE INDEX IF NOT EXISTS tasks_parent ON tasks(user_id, parent_id)")
+        if postgres:
+            db.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS group_id INTEGER")
+        elif "group_id" not in {row[1] for row in db.execute("PRAGMA table_info(tasks)")}:
+            db.execute("ALTER TABLE tasks ADD COLUMN group_id INTEGER")
+        db.execute("CREATE INDEX IF NOT EXISTS tasks_group ON tasks(user_id, group_id)")
         schema = """
+            CREATE TABLE IF NOT EXISTS task_groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL, name TEXT NOT NULL, created_at TEXT NOT NULL
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS task_groups_owner_name ON task_groups(user_id, name);
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL
             );

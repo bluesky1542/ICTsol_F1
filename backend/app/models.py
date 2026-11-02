@@ -7,6 +7,15 @@ Level = Literal["low", "medium", "high"]
 ConditionLevel = Literal["good", "slightly_good", "normal", "slightly_tired", "tired"]
 
 
+class TaskGroupInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    name: str = Field(min_length=1, max_length=30)
+
+
+class TaskGroup(TaskGroupInput):
+    id: int
+
+
 class TaskInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     title: str = Field(min_length=1, max_length=120)
@@ -17,6 +26,7 @@ class TaskInput(BaseModel):
     concentration: Level = "medium"
     place: str = Field(default="", max_length=80)
     parent_id: int | None = Field(default=None, ge=1)
+    group_id: int | None = Field(default=None, ge=1)
 
     @field_validator("deadline")
     @classmethod

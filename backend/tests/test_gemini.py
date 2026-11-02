@@ -87,7 +87,7 @@ class GeminiTest(unittest.TestCase):
         self.assertEqual(len(payload["tasks"]), 1)
         child = payload["tasks"][0]
         self.assertEqual(set(child), {"id", "title", "minutes", "deadline", "priority", "concentration", "place",
-                                      "parent_id", "parent_title", "has_children"})
+                                      "parent_id", "parent_title", "has_children", "group_name"})
         self.assertEqual(child["parent_title"], parent["title"])
         self.assertFalse(child["has_children"])
         self.assertEqual(self.client.put(f'/api/tasks/{parent["id"]}', json={"title": parent["title"], "minutes": 10}).status_code, 200)

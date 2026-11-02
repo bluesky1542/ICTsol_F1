@@ -12,6 +12,7 @@ from . import recommendations
 from .auth import User, router as auth_router
 from .calendar import router as calendar_router, free_minutes, get_calendar
 from .reflections import router as reflections_router
+from .groups import router as groups_router, list_groups
 from .models import ActivityInput, Condition, SuggestionInput, Task, TaskInput, TaskStatus
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
@@ -28,6 +29,7 @@ app = FastAPI(title="ICTsol F1 API", version="0.3.0", lifespan=lifespan)
 app.include_router(auth_router)
 app.include_router(calendar_router)
 app.include_router(reflections_router)
+app.include_router(groups_router)
 
 
 @app.middleware("http")
@@ -79,11 +81,37 @@ def create_task(task: TaskInput, user: User):
     with storage.database() as db:
         storage.lock_tasks(db, user["id"])
         validate_parent(db, user["id"], task.parent_id)
+        data["group_id"] = task_group(db, user["id"], task)
         saved = dict(db.execute(
-            "INSERT INTO tasks (title,minutes,deadline,priority,concentration,place,parent_id,user_id) VALUES (:title,:minutes,:deadline,:priority,:concentration,:place,:parent_id,:user_id) RETURNING *", data,
+            "INSERT INTO tasks (title,minutes,deadline,priority,concentration,place,parent_id,group_id,user_id) VALUES (:title,:minutes,:deadline,:priority,:concentration,:place,:parent_id,:group_id,:user_id) RETURNING *", data,
         ).fetchone())
         storage.refresh_ancestors(db, user["id"], task.parent_id)
         return saved
+
+
+def task_group(db, user_id, task):
+    if task.parent_id is not None:
+        return db.execute("SELECT group_id FROM tasks WHERE id=? AND user_id=?", (task.parent_id, user_id)).fetchone()["group_id"]
+    if task.group_id is not None and not db.execute(
+        "SELECT id FROM task_groups WHERE id=? AND user_id=?", (task.group_id, user_id),
+    ).fetchone():
+        raise HTTPException(400, "グループが見つかりません")
+    return task.group_id
+
+
+def sync_group(db, user_id, task_id, group_id):
+    # 循環した既存データでも止まり、深いツリーでも再帰上限に触れない。
+    children = {}
+    for row in db.execute("SELECT id,parent_id FROM tasks WHERE user_id=?", (user_id,)):
+        children.setdefault(row["parent_id"], []).append(row["id"])
+    pending, visited = [task_id], set()
+    while pending:
+        current = pending.pop()
+        if current in visited:
+            continue
+        visited.add(current)
+        db.execute("UPDATE tasks SET group_id=? WHERE id=? AND user_id=?", (group_id, current, user_id))
+        pending.extend(children.get(current, []))
 
 
 def validate_parent(db, user_id, parent_id, task_id=None):
@@ -109,10 +137,12 @@ def edit_task(task_id: int, task: TaskInput, user: User):
         if not previous:
             raise HTTPException(404, "タスクが見つかりません")
         validate_parent(db, user["id"], task.parent_id, task_id)
+        group_id = task_group(db, user["id"], task)
         db.execute(
             "UPDATE tasks SET title=:title,minutes=:minutes,deadline=:deadline,priority=:priority,concentration=:concentration,place=:place,parent_id=:parent_id WHERE id=:id AND user_id=:user_id",
             {**task.model_dump(mode="json"), "id": task_id, "user_id": user["id"]},
         )
+        sync_group(db, user["id"], task_id, group_id)
         if previous["parent_id"] != task.parent_id:
             storage.refresh_ancestors(db, user["id"], previous["parent_id"])
         storage.refresh_ancestors(db, user["id"], task.parent_id)
@@ -183,9 +213,11 @@ def suggest(context: SuggestionInput, user: User):
         return {"source": "no_candidates", "available_minutes": available, "choices": [], "rest_reason": "今の時間・場所で取り組めるタスクはありません。休息も選べます。"}
     titles = {t["id"]: t["title"] for t in all_tasks}
     parents = {t["parent_id"] for t in all_tasks}
+    group_names = {group["id"]: group["name"] for group in list_groups(user)}
     ai_tasks = [{**{key: t[key] for key in (
         "id", "title", "minutes", "deadline", "priority", "concentration", "place", "parent_id")},
-        "parent_title": titles.get(t["parent_id"]), "has_children": t["id"] in parents} for t in candidates]
+        "parent_title": titles.get(t["parent_id"]), "has_children": t["id"] in parents,
+        "group_name": group_names.get(t["group_id"])} for t in candidates]
     result = recommendations.generate(ai_tasks, condition["level"], available, context.place, user["id"])
     require_current_condition(user)
     # AI処理中に完了・編集されたタスクの古い提案は表示しない。
