@@ -22,7 +22,19 @@ export function demoResponse(path: string, method: string): unknown {
   switch (path) {
     case "/tasks": return tasks;
     case "/groups": return [{ id: 1, name: "授業" }, { id: 2, name: "バイト" }];
-    case "/activities": return [];
+    case "/activities": {
+      // 振り返りの「今日やったこと」を見せるためのサンプル（今日の日本時間）。
+      const day = new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
+      const at = (time: string) => new Date(`${day}T${time}:00+09:00`).toISOString();
+      const entry = (id: number, time: string, changes: object) => ({ id, task_id: null, task_title: null, condition_level: "normal",
+        created_at: at(time), kind: "task", rank: 1, planned_minutes: 15, ends_at: at(time), outcome: "done", ended_at: at(time), ...changes });
+      return [
+        entry(3, "15:30", { task_id: 2, task_title: "机の上を片づける", outcome: "partial", rank: 2 }),
+        entry(2, "13:00", { kind: "rest", rank: null, planned_minutes: 10 }),
+        entry(1, "09:10", { task_id: 9, task_title: "共有リンクをチームに送る", planned_minutes: 5 }),
+      ];
+    }
+    case "/activities/current": return null;
     case "/reflections": return [];
     case "/reflections/plan": return { day: new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10), end_time: "18:00" };
     case "/reflections/summary": {

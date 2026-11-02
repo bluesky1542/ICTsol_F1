@@ -9,13 +9,14 @@ export function askNotificationPermission() {
 }
 
 // 指定時刻に1回だけ通知する。画面（タブ）が開いている間だけ有効。戻り値で取り消せる。
-export function scheduleNotification(at: number, title: string, body: string, onClick: () => void) {
+// tag が同じ通知は上書きされるため、用途ごとに分ける。
+export function scheduleNotification(at: number, title: string, body: string, onClick: () => void, tag = "ictsol-reflection") {
   const delay = at - Date.now();
   if (!supported() || delay <= 0 || delay > 2 ** 31 - 1) return () => undefined;
   const timer = setTimeout(() => {
     if (Notification.permission !== "granted") return;
     try {
-      const notice = new Notification(title, { body, tag: "ictsol-reflection" });
+      const notice = new Notification(title, { body, tag });
       notice.onclick = () => { window.focus(); onClick(); notice.close(); };
     } catch { /* スマホのブラウザなど new Notification が使えない環境では画面内の表示に任せる */ }
   }, delay);

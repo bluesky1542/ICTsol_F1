@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { Animated, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
-import { Achievement, Activity, api, Condition, ConditionLevel, Level, Reflection, Suggestions, Task, TaskGroup, WorkPlan } from "./api";
+import { Achievement, Activity, ActivityAction, api, Condition, ConditionLevel, Level, Reflection, Suggestions, Task, TaskGroup, WorkPlan } from "./api";
 import CalendarPanel from "./CalendarPanel";
+import FocusCard from "./FocusCard";
+import { todayLog } from "./activityLog";
 import TaskDonut from "./TaskDonut";
 import TaskGroupPanel, { GroupChips } from "./TaskGroupPanel";
 import { filterTasks, groupSections, type GroupFilter } from "./taskGroups";
@@ -81,7 +83,11 @@ export default function Dashboard({ username, logout }: { username: string; logo
   const [available, setAvailable] = useState("30");
   const [currentPlace, setCurrentPlace] = useState("");
   const [suggestions, setSuggestions] = useState<Suggestions | null>(null);
-  const [selected, setSelected] = useState<number | "rest" | null>(null);
+  // 取り組み中の記録（タイマー）と、振り返りに出す最近の記録。
+  const [activity, setActivity] = useState<Activity | null>(null);
+  const [activities, setActivities] = useState<Activity[]>([]);
+  // 「休む」を押したあと、休憩時間を選んでいる間だけ true。
+  const [restOpen, setRestOpen] = useState(false);
   const [calendarLinked, setCalendarLinked] = useState(false);
   const [calendarReload, setCalendarReload] = useState(0);
   const [useCalendar, setUseCalendar] = useState(true);
@@ -130,6 +136,14 @@ export default function Dashboard({ username, logout }: { username: string; logo
     return scheduleNotification(dueAt, "今日の振り返りの時間です", "おつかれさまでした。3つの質問に答えて1日を締めくくりましょう。",
       () => { setNow(Date.now()); changeTab("now"); });
   }, [dueAt, !!todayReflection]);
+  // 取り組みの予定時刻になったらブラウザで知らせる（延長したら付け直す）。
+  useEffect(() => {
+    if (!activity?.ends_at) return;
+    const rest = activity.kind === "rest";
+    return scheduleNotification(Date.parse(activity.ends_at), rest ? "休憩の時間が終わりました" : "時間になりました",
+      rest ? "そろそろ再開しましょう。" : `「${activity.task_title ?? "タスク"}」は終わりましたか？`,
+      () => changeTab("now"), "ictsol-focus");
+  }, [activity?.id, activity?.ends_at]);
   useEffect(() => {
     setAchievement(todayReflection?.achievement ?? null); setSatisfaction(todayReflection?.satisfaction ?? null);
     setTiredness(todayReflection?.tiredness ?? null); setComment(todayReflection?.comment ?? "");
@@ -143,13 +157,14 @@ export default function Dashboard({ username, logout }: { username: string; logo
     }
     finally { lock.current = false; setBusy(false); }
   }
-  function invalidate() { setSuggestions(null); setSelected(null); }
+  function invalidate() { setSuggestions(null); setRestOpen(false); }
   async function refresh() {
     const [nextTasks, nextCondition, config, nextReflections, nextPlan, nextGroups] = await Promise.all([
       api<Task[]>("/tasks"), api<Condition | null>("/condition"), api<{ ai_configured: boolean }>("/config"),
       api<Reflection[]>("/reflections"), api<WorkPlan | null>("/reflections/plan"),
       api<TaskGroup[]>("/groups"),
     ]);
+    await loadActivities();
     setGroups(nextGroups);
     setGroupFilter(value => typeof value === "number" && !nextGroups.some(group => group.id === value) ? "all" : value);
     setGroupId(value => value !== null && !nextGroups.some(group => group.id === value) ? null : value);
@@ -217,9 +232,27 @@ export default function Dashboard({ username, logout }: { username: string; logo
     else if (parentId !== null && !nextTasks.some(value => value.id === parentId)) setParentId(null);
     setNotice("タスクを削除しました。");
   }
-  async function choose(taskId: number | null) {
-    await api<Activity>("/activities", "POST", { task_id: taskId });
-    setSelected(taskId ?? "rest"); setNotice(taskId === null ? "休息を記録しました。ゆっくり休みましょう。" : "取り組むタスクを記録しました。");
+  async function loadActivities() {
+    const [current, list] = await Promise.all([api<Activity | null>("/activities/current"), api<Activity[]>("/activities")]);
+    setActivity(current); setActivities(list);
+  }
+  // 提案から選ぶと取り組み（休憩）タイマーを始める。前の取り組みはサーバーで中断扱いになる。
+  async function choose(taskId: number | null, rank: number | null, minutes: number) {
+    askNotificationPermission();
+    await api<Activity>("/activities", "POST", { task_id: taskId, rank, minutes });
+    await loadActivities(); setRestOpen(false);
+    setNotice(taskId === null ? `${minutes}分の休憩を始めました。ゆっくり休みましょう。` : "取り組みを始めました。終わったら「終わった」を押してください。");
+    scroll.current?.scrollTo({ y: 0, animated: true });
+  }
+  async function act(action: ActivityAction, extra?: number) {
+    if (!activity) return;
+    const name = activity.kind === "rest" ? "休憩" : `「${activity.task_title ?? "タスク"}」`;
+    await api<Activity>(`/activities/${activity.id}`, "PATCH", { action, ...(extra ? { minutes: extra } : {}) });
+    const [nextTasks] = await Promise.all([api<Task[]>("/tasks"), loadActivities()]);
+    setTasks(nextTasks); invalidate();
+    setNotice(action === "extend" ? `${extra}分延長しました。`
+      : action === "finish" ? (activity.kind === "rest" ? "休憩おわり。おつかれさまでした。" : `${name}を完了にしました。おつかれさまでした。`)
+      : action === "partial" ? `${name}を途中までとして記録しました。` : `${name}をやめました。`);
   }
   async function saveReflection() {
     if (japanToday(Date.now()) !== reflectionDay) {
@@ -246,6 +279,9 @@ export default function Dashboard({ username, logout }: { username: string; logo
     : !aiConfigured ? "AI提案は準備中です。"
     : !conditionFresh ? "先に「今の調子」を選んでください。" : "";
   const setAvailableAndReset = (value: string) => { setAvailable(value); invalidate(); };
+  // 休憩時間の初期の選択。使える時間に収まる範囲で15分に近いもの。
+  const restDefault = [15, 10, 5].find(value => value <= (suggestions?.available_minutes ?? 15)) ?? 5;
+  const log = todayLog(activities, now);
   function saveWorkEnd(text: string) {
     // 許可ダイアログはボタン操作の直後に出す必要があるため、通信より先に求める。
     askNotificationPermission();
@@ -330,6 +366,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
       <View style={[wide ? s.columns : s.stack, hidden("now")]}>
         {/* 左（スマホでは上）：調子 → 提案 → 振り返り */}
         <View style={[s.stack, wide && s.column]}>
+          {activity && <FocusCard activity={activity} disabled={busy || isDemo} act={(action, extra) => void run(() => act(action, extra))} />}
           <Card title="今の調子は？">
             <Row>{conditions.map(([key, text]) => <Button key={key} title={text} disabled={busy || !connected}
               selected={conditionFresh && condition?.level === key} onPress={() => void run(async () => {
@@ -368,24 +405,33 @@ export default function Dashboard({ username, logout }: { username: string; logo
               })} />
             {!!aiBlocked && <Hint>{aiBlocked}</Hint>}
             <Details title="送信先：Google（Gemini）">
-              <Hint>候補タスク・今の調子・使える時間・場所と、過去7回分の朝の調子と振り返り（コメントを含む）を送信します。</Hint>
+              <Hint>候補タスク・今の調子・使える時間・場所と、過去7回分の朝の調子と振り返り（コメントを含む）、過去14日分の取り組み記録（選んだタスク名・休憩・結果）を送信します。</Hint>
               <Hint>無料枠では送信内容がGoogleの製品改善に使われる場合があります。個人情報・機密情報は入力しないでください。</Hint>
             </Details>
           </Card>
 
           {suggestions && <Card title={suggestions.source === "ai" ? "どれか1つ選んでください" : "今できるタスクはありません"}
             right={<Hint>{suggestions.available_minutes}分</Hint>}>
-            {suggestions.choices.map(({ task, reason }, index) => <View key={task.id} style={s.suggestion}>
-              <Text style={s.taskTitle}>{index === 0 ? "おすすめ　" : ""}{task.title}　<Text style={ui.hint}>{task.minutes}分</Text></Text>
-              <Text style={s.body}>{reason}</Text>
-              <Button title={selected === task.id ? "✓ 取り組み中" : "これにする"} selected={selected === task.id}
-                disabled={busy || isDemo || selected === task.id} onPress={() => void run(() => choose(task.id))} />
-            </View>)}
+            {!!activity && <Hint>今の取り組みがあります。新しく選ぶと、今の取り組みは「中断」として記録されます。</Hint>}
+            {suggestions.choices.map(({ task, reason }, index) => {
+              const active = activity?.kind === "task" && activity.task_id === task.id;
+              return <View key={task.id} style={s.suggestion}>
+                <Text style={s.taskTitle}>{index === 0 ? "おすすめ　" : ""}{task.title}　<Text style={ui.hint}>{task.minutes}分</Text></Text>
+                <Text style={s.body}>{reason}</Text>
+                <Button title={active ? "✓ 取り組み中" : `これにする（${Math.min(task.minutes, 240)}分タイマー）`} selected={active}
+                  disabled={busy || isDemo || active} onPress={() => void run(() => choose(task.id, index + 1, Math.min(task.minutes, 240)))} />
+              </View>;
+            })}
             <View style={[s.suggestion, s.rest]}>
               <Text style={s.taskTitle}>ひと休みする</Text>
               <Text style={s.body}>{suggestions.rest_reason}</Text>
-              <Button title={selected === "rest" ? "✓ 休憩中" : "休む"} selected={selected === "rest"}
-                disabled={busy || isDemo || selected === "rest"} onPress={() => void run(() => choose(null))} />
+              {activity?.kind === "rest" ? <Button title="✓ 休憩中" selected disabled onPress={() => undefined} />
+                : restOpen ? <>
+                  <Label>何分休む？</Label>
+                  <Row>{[5, 10, 15, 30].map(value => <Button key={value} small title={`${value}分`}
+                    selected={value === restDefault} disabled={busy || isDemo} onPress={() => void run(() => choose(null, null, value))} />)}
+                    <Button small title="やめる" disabled={busy} onPress={() => setRestOpen(false)} /></Row>
+                </> : <Button title="休む" disabled={busy || isDemo} onPress={() => setRestOpen(true)} />}
             </View>
           </Card>}
 
@@ -483,6 +529,10 @@ export default function Dashboard({ username, logout }: { username: string; logo
           <Button small title={reflectionDue ? "あとで" : "閉じる"} disabled={busy} onPress={laterReflection} />
         </View>
         <Hint>おつかれさまでした。3つ答えたら1日の締めくくりです。</Hint>
+        <Label>今日やったこと</Label>
+        {log.length ? <View style={s.log}>{log.map(item => <Text key={item.id} style={s.logItem}>
+          <Text style={ui.hint}>{item.time}　</Text>{item.text}</Text>)}</View>
+          : <Hint>今日は提案から選んだ記録はありません。</Hint>}
         <Label>タスクはできた？</Label>
         <Row>{achievements.map(([key, text]) => <Button key={key} title={text} selected={achievement === key}
           disabled={busy || isDemo} onPress={() => setAchievement(key)} />)}</Row>
@@ -530,4 +580,6 @@ const s = StyleSheet.create({
   body: { fontSize: 15, lineHeight: 23, color: colors.text },
   suggestion: { padding: 14, backgroundColor: colors.soft, borderRadius: 12, gap: 10 },
   rest: { backgroundColor: "#f4f1ea" },
+  log: { gap: 4, padding: 12, borderRadius: 10, backgroundColor: colors.soft },
+  logItem: { fontSize: 14, lineHeight: 21, color: colors.text },
 });

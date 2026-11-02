@@ -164,6 +164,42 @@ class GeminiTest(unittest.TestCase):
         self.assertEqual(payload["recent_reflections"][0]["tiredness_label"], "少し元気")
         self.assertEqual([entry["day"] for entry in payload["recent_conditions"]], expected_days)
 
+    def test_activity_history_is_sent(self):
+        user_id = self.client.get("/api/auth/me").json()["id"]
+        now = datetime.now(timezone.utc)
+        rows = [
+            # (何日前, 種類, タスク名, 調子, 何番目, 結果)
+            (0, "task", "資料を読む", "tired", 2, "done"),
+            (1, "rest", None, "tired", None, "done"),
+            (2, "task", "発表練習", "normal", 1, "partial"),
+            (3, "task", "メール返信", "slightly_tired", 3, "stopped"),
+            (15, "task", "古い記録", "normal", 1, "done"),
+            (0, "task", "取り組み中", "normal", 1, None),
+        ]
+        with database() as db:
+            for days, kind, title, level, rank, outcome in rows:
+                created = (now - timedelta(days=days, minutes=1)).isoformat()
+                db.execute(
+                    "INSERT INTO activities (user_id,task_id,task_title,condition_level,created_at,kind,rank,planned_minutes,ends_at,outcome) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (user_id, self.task["id"] if kind == "task" else None, title, level, created, kind, rank, 10, created, outcome))
+        self.assertEqual(self.suggest().status_code, 200)
+        payload = json.loads(self.post.call_args.kwargs["json"]["contents"][0]["parts"][0]["text"])
+        titles = [entry["task_title"] for entry in payload["recent_activities"]]
+        self.assertEqual(titles, ["資料を読む", None, "発表練習", "メール返信"])
+        self.assertEqual(payload["recent_activities"][0], {
+            "day": (now - timedelta(minutes=1)).astimezone(timezone(timedelta(hours=9))).date().isoformat(),
+            "kind": "task", "task_title": "資料を読む", "condition_label": "疲れてる",
+            "rank": 2, "planned_minutes": 10, "outcome": "done",
+        })
+        self.assertEqual(payload["activity_summary"], {
+            "total": 4, "rest_count": 1, "rest_when_tired": 1, "tired_total": 3,
+            "rank_counts": {"1": 1, "2": 1, "3": 1}, "done": 2, "partial": 1, "stopped": 1,
+        })
+        instructions = self.post.call_args.kwargs["json"]["systemInstruction"]["parts"][0]["text"]
+        self.assertIn("recent_activities", instructions)
+        self.assertIn("task_title", instructions)
+
     def test_missing_configuration(self):
         for settings in [{"GEMINI_API_KEY": " "}, {"GEMINI_MODEL": " "}]:
             with self.subTest(settings=settings), patch.dict(os.environ, settings):

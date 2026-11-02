@@ -13,7 +13,7 @@ from .auth import User, router as auth_router
 from .calendar import router as calendar_router, free_minutes, get_calendar
 from .reflections import router as reflections_router
 from .groups import router as groups_router, list_groups
-from .models import ActivityInput, Condition, SuggestionInput, Task, TaskInput, TaskStatus
+from .models import ActivityAction, ActivityInput, Condition, SuggestionInput, Task, TaskInput, TaskStatus
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
@@ -256,35 +256,111 @@ def suggest(context: SuggestionInput, user: User):
     return {"source": "ai", "available_minutes": available, "choices": [{"task": Task(**current[c.task_id]), "reason": c.reason} for c in result.choices], "rest_reason": result.rest_reason}
 
 
+ACTIVITY_COLUMNS = "id,task_id,task_title,condition_level,created_at,kind,rank,planned_minutes,ends_at,outcome,ended_at"
+# 開始から24時間たった取り組みは、付け忘れとみなして中断扱いにする。
+ACTIVITY_LIMIT = timedelta(hours=24)
+
+
+def activity_row(row):
+    data = dict(row)
+    # 旧形式の行（取り組みモード導入前）は task_id の有無から種類を補う。
+    data["kind"] = data["kind"] or ("task" if data["task_id"] is not None else "rest")
+    return data
+
+
+def close_stale_activities(db, user_id, now):
+    # 取り組み中のまま24時間を過ぎた記録を中断にする。
+    cutoff = (now - ACTIVITY_LIMIT).isoformat()
+    db.execute("UPDATE activities SET outcome='stopped', ended_at=? WHERE user_id=? AND outcome IS NULL "
+               "AND ends_at IS NOT NULL AND created_at<?", (now.isoformat(), user_id, cutoff))
+
+
 @app.get("/api/activities")
 def list_activities(user: User):
     with storage.database() as db:
-        return [dict(row) for row in db.execute(
-            "SELECT id,task_id,task_title,condition_level,created_at FROM activities WHERE user_id=? ORDER BY id DESC LIMIT 50",
-            (user["id"],),
+        return [activity_row(row) for row in db.execute(
+            f"SELECT {ACTIVITY_COLUMNS} FROM activities WHERE user_id=? ORDER BY id DESC LIMIT 50", (user["id"],),
         )]
+
+
+@app.get("/api/activities/current")
+def current_activity(user: User):
+    now = datetime.now(timezone.utc)
+    with storage.database() as db:
+        storage.lock_tasks(db, user["id"])
+        close_stale_activities(db, user["id"], now)
+        row = db.execute(
+            f"SELECT {ACTIVITY_COLUMNS} FROM activities WHERE user_id=? AND outcome IS NULL AND ends_at IS NOT NULL "
+            "ORDER BY id DESC LIMIT 1", (user["id"],),
+        ).fetchone()
+        return activity_row(row) if row else None
 
 
 @app.post("/api/activities", status_code=201)
 def save_activity(data: ActivityInput, user: User):
     require_current_condition(user)
+    now = datetime.now(timezone.utc)
     with storage.database() as db:
+        storage.lock_tasks(db, user["id"])
         condition = db.execute("SELECT level FROM user_conditions WHERE user_id=?", (user["id"],)).fetchone()
         if not condition:
             raise HTTPException(409, "先に今の調子を保存してください。")
-        title = None
+        title, minutes = None, data.minutes or 15
         if data.task_id is not None:
-            task = db.execute("SELECT title,completed FROM tasks WHERE id=? AND user_id=?", (data.task_id, user["id"])).fetchone()
+            task = db.execute("SELECT title,minutes,completed FROM tasks WHERE id=? AND user_id=?", (data.task_id, user["id"])).fetchone()
             if not task:
                 raise HTTPException(404, "タスクが見つかりません")
             if task["completed"]:
                 raise HTTPException(409, "完了済みのタスクです。最新の状態に更新してください。")
-            title = task["title"]
+            if db.execute("SELECT 1 FROM tasks WHERE parent_id=? AND user_id=?", (data.task_id, user["id"])).fetchone():
+                raise HTTPException(409, "見出しは選べません")
+            title, minutes = task["title"], data.minutes or min(task["minutes"], 240)
+        # 取り組みは同時に1つだけ。前の取り組みは中断として閉じる。
+        db.execute("UPDATE activities SET outcome='stopped', ended_at=? WHERE user_id=? AND outcome IS NULL AND ends_at IS NOT NULL",
+                   (now.isoformat(), user["id"]))
         # 選択時のタスク名と調子を残し、後日の編集で履歴が変わらないようにする。
-        return dict(db.execute(
-            "INSERT INTO activities (user_id,task_id,task_title,condition_level,created_at) VALUES (?,?,?,?,?) RETURNING id,task_id,task_title,condition_level,created_at",
-            (user["id"], data.task_id, title, condition["level"], datetime.now(timezone.utc).isoformat()),
+        return activity_row(db.execute(
+            "INSERT INTO activities (user_id,task_id,task_title,condition_level,created_at,kind,rank,planned_minutes,ends_at) "
+            f"VALUES (?,?,?,?,?,?,?,?,?) RETURNING {ACTIVITY_COLUMNS}",
+            (user["id"], data.task_id, title, condition["level"], now.isoformat(),
+             "task" if data.task_id is not None else "rest", data.rank, minutes,
+             (now + timedelta(minutes=minutes)).isoformat()),
         ).fetchone())
+
+
+@app.patch("/api/activities/{activity_id}")
+def update_activity(activity_id: int, data: ActivityAction, user: User):
+    now = datetime.now(timezone.utc)
+    with storage.database() as db:
+        storage.lock_tasks(db, user["id"])
+        close_stale_activities(db, user["id"], now)
+        row = db.execute(f"SELECT {ACTIVITY_COLUMNS} FROM activities WHERE id=? AND user_id=? AND ends_at IS NOT NULL",
+                         (activity_id, user["id"])).fetchone()
+        if not row:
+            raise HTTPException(404, "取り組みの記録が見つかりません")
+        if row["outcome"] is not None:
+            raise HTTPException(409, "この取り組みはすでに終わっています。最新の状態に更新してください。")
+        if data.action == "extend":
+            ends_at = max(now, datetime.fromisoformat(row["ends_at"])) + timedelta(minutes=data.minutes)
+            db.execute("UPDATE activities SET ends_at=?, planned_minutes=? WHERE id=?",
+                       (ends_at.isoformat(), (row["planned_minutes"] or 0) + data.minutes, activity_id))
+        else:
+            outcome = {"finish": "done", "partial": "partial", "stop": "stopped"}[data.action]
+            db.execute("UPDATE activities SET outcome=?, ended_at=? WHERE id=?", (outcome, now.isoformat(), activity_id))
+            if outcome == "done" and row["task_id"] is not None:
+                complete_leaf(db, user["id"], row["task_id"])
+        return activity_row(db.execute(f"SELECT {ACTIVITY_COLUMNS} FROM activities WHERE id=?", (activity_id,)).fetchone())
+
+
+def complete_leaf(db, user_id, task_id):
+    # 「終わった」で完了にする。消えたタスク・見出し・完了済みは記録だけ閉じる。
+    task = db.execute("SELECT parent_id,completed FROM tasks WHERE id=? AND user_id=?", (task_id, user_id)).fetchone()
+    if not task or task["completed"] or db.execute(
+        "SELECT 1 FROM tasks WHERE parent_id=? AND user_id=?", (task_id, user_id),
+    ).fetchone():
+        return
+    db.execute("UPDATE tasks SET completed=1 WHERE id=? AND user_id=?", (task_id, user_id))
+    storage.refresh_ancestors(db, user_id, task["parent_id"])
 
 
 # 公開用に書き出した画面を、APIと同じURLで配信する。

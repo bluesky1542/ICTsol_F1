@@ -12,7 +12,11 @@ export type Condition = { level: ConditionLevel; updated_at: string; expires_at:
 export type Activity = {
   id: number; task_id: number | null; task_title: string | null;
   condition_level: ConditionLevel; created_at: string;
+  // 取り組みモード導入前の記録では、kind 以外は null。
+  kind: "task" | "rest"; rank: number | null; planned_minutes: number | null;
+  ends_at: string | null; outcome: "done" | "partial" | "stopped" | null; ended_at: string | null;
 };
+export type ActivityAction = "finish" | "partial" | "extend" | "stop";
 export type Achievement = "done" | "partial" | "not_done";
 export type Reflection = {
   day: string; achievement: Achievement; satisfaction: number;

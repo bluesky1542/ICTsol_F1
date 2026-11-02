@@ -74,6 +74,17 @@ class WorkPlanInput(BaseModel):
 class ActivityInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     task_id: int | None = Field(ge=1)
+    # 提案の何番目を選んだか（休憩・不明は None）
+    rank: int | None = Field(default=None, ge=1, le=3)
+    # 取り組む予定の分数。省略時はタスクの所要時間（休憩は15分）
+    minutes: int | None = Field(default=None, ge=1, le=240)
+
+
+class ActivityAction(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action: Literal["finish", "partial", "extend", "stop"]
+    # 延長する分数（extend のときだけ使う）
+    minutes: int = Field(default=10, ge=1, le=120)
 
 
 class SuggestionInput(BaseModel):
