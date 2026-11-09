@@ -21,7 +21,7 @@ export default function FocusCard({ activity, disabled, act }: {
   const left = Date.parse(activity.ends_at ?? activity.created_at) - now;
   const over = left <= 0;
   const name = rest ? "休憩" : activity.task_title ?? "タスク";
-  return <Card title={rest ? "☕ 休憩中" : "⏱ 取り組み中"} right={<Hint>予定 {activity.planned_minutes}分</Hint>}>
+  return <Card title={rest ? "休憩中" : "取り組み中"} right={<Hint>予定 {activity.planned_minutes}分</Hint>}>
     <Text style={s.name}>{name}</Text>
     <View accessible accessibilityRole="timer" accessibilityLabel={over ? `予定時間を${formatDuration(left)}過ぎました` : `残り${formatDuration(left)}`}>
       <Text style={[s.time, over && s.over]}>{over ? `+${formatDuration(left)}` : formatDuration(left)}</Text>
