@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { View } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
 import { api, TaskGroup } from "./api";
 import type { GroupFilter } from "./taskGroups";
-import { Button, Details, Input, Row } from "./ui";
+import { Button, colors, Details, Input, Row } from "./ui";
 
 export function GroupChips({ groups, value, set, disabled, all = false, unclassified = true }: {
   groups: TaskGroup[]; value: GroupFilter; set: (value: GroupFilter) => void; disabled: boolean;
@@ -19,35 +19,32 @@ export function GroupChips({ groups, value, set, disabled, all = false, unclassi
   </View>)}</Row>;
 }
 
+// グループの作成と削除。名前の変更は一覧の見出しの「名前を変更」で行う。
 export default function TaskGroupPanel({ groups, disabled, run, changed }: {
   groups: TaskGroup[]; disabled: boolean; run: (work: () => Promise<void>) => Promise<void>; changed: () => Promise<void>;
 }) {
   const [name, setName] = useState("");
-  const [editing, setEditing] = useState<number | null>(null);
-  const [draft, setDraft] = useState("");
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
-  async function save(groupId: number | null, text: string) {
-    if (!text.trim()) throw new Error("グループ名を入力してください。");
-    await api(groupId === null ? "/groups" : `/groups/${groupId}`, groupId === null ? "POST" : "PUT", { name: text.trim() });
-    await changed(); setName(""); setEditing(null);
+  async function create() {
+    if (!name.trim()) throw new Error("グループ名を入力してください。");
+    await api("/groups", "POST", { name: name.trim() });
+    await changed(); setName("");
   }
   return <Details title="グループを管理">
     <Input label="新しいグループ名" value={name} set={setName} disabled={disabled} maxLength={30} />
-    <Row><Button small title="作成" disabled={disabled || groups.length >= 30} onPress={() => void run(() => save(null, name))} /></Row>
-    {groups.map(group => <View key={group.id} style={{ gap: 8 }}>
-      {editing === group.id ? <>
-        <Input label="新しい名前" value={draft} set={setDraft} disabled={disabled} maxLength={30} />
-        <Row><Button small title="保存" disabled={disabled} onPress={() => void run(() => save(group.id, draft))} />
-          <Button small title="やめる" disabled={disabled} onPress={() => setEditing(null)} /></Row>
-      </> : <Row>
-        <View style={{ maxWidth: "100%" }}><Button small title={group.name} label={`${group.name}の名前を変更`} disabled={disabled}
-          onPress={() => { setEditing(group.id); setDraft(group.name); setConfirmDelete(null); }} /></View>
-        <Button small title={confirmDelete === group.id ? "本当に削除" : "削除"} label={`${group.name}を${confirmDelete === group.id ? "本当に削除" : "削除"}`}
-          disabled={disabled} onPress={() => confirmDelete === group.id ? void run(async () => {
-            await api(`/groups/${group.id}`, "DELETE"); await changed(); setConfirmDelete(null);
-          }) : setConfirmDelete(group.id)} />
-        {confirmDelete === group.id && <Button small title="やめる" disabled={disabled} onPress={() => setConfirmDelete(null)} />}
-      </Row>}
+    <Row><Button small title="作成" disabled={disabled || groups.length >= 30} onPress={() => void run(create)} /></Row>
+    {groups.map(group => <View key={group.id} style={s.item}>
+      <Text numberOfLines={1} style={s.name}>{group.name}</Text>
+      <Button small title={confirmDelete === group.id ? "本当に削除" : "削除"} label={`${group.name}を${confirmDelete === group.id ? "本当に削除" : "削除"}`}
+        disabled={disabled} onPress={() => confirmDelete === group.id ? void run(async () => {
+          await api(`/groups/${group.id}`, "DELETE"); await changed(); setConfirmDelete(null);
+        }) : setConfirmDelete(group.id)} />
+      {confirmDelete === group.id && <Button small title="やめる" disabled={disabled} onPress={() => setConfirmDelete(null)} />}
     </View>)}
   </Details>;
 }
+
+const s = StyleSheet.create({
+  item: { flexDirection: "row", alignItems: "center", gap: 8 },
+  name: { flex: 1, fontSize: 15, color: colors.ink },
+});

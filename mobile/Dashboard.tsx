@@ -439,8 +439,6 @@ export default function Dashboard({ username, logout }: { username: string; logo
   // 一覧の行の下に開く「グループを変更」。名前を入れるか一覧から選ぶと、すぐ移して「元に戻す」を出す。
   function groupPicker(task: Task) {
     const name = groupName.trim(), found = name ? groupByName(groups, name) : null;
-    // 入力中の文字を含む既存のグループ名を候補に出す。
-    const similar = name ? groups.filter(group => group.name.includes(name) && group.name !== name).slice(0, 5) : [];
     const choices: GroupRef[] = [...groups.map(group => ({ groupId: group.id, name: group.name })), { groupId: null, name: "未分類" }];
     return <View style={s.picker}>
       <Row>
@@ -448,7 +446,6 @@ export default function Dashboard({ username, logout }: { username: string; logo
         <Button small primary title="決定" disabled={busy || !name || found?.id === task.group_id} onPress={() => void run(() => moveByName(task, groupName))} />
       </Row>
       {!!name && <Hint>{found ? found.id === task.group_id ? `既に「${found.name}」に入っています` : `「${found.name}」に移します` : `「${name}」を新しく作ります`}</Hint>}
-      {!!similar.length && <Row>{similar.map(group => <Button key={group.id} small title={group.name} disabled={busy} onPress={() => setGroupName(group.name)} />)}</Row>}
       <Row>{choices.map(target => <View key={String(target.groupId)} style={{ maxWidth: "100%" }}>
         <Button small title={target.name} selected={task.group_id === target.groupId}
           disabled={busy || task.group_id === target.groupId} onPress={() => void run(() => moveTask(task, target))} />

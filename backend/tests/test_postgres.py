@@ -18,6 +18,7 @@ from app.usage import reserve_ai_call
 from test_task_groups import TaskGroupCases
 from test_task_delete import TaskDeleteCases
 from test_activities import ActivityCases
+from helpers import current_user_id
 
 
 @unittest.skipUnless(os.getenv("TEST_DATABASE_URL"), "PostgreSQLのテスト用DBは未設定")
@@ -65,7 +66,7 @@ class PostgresTest(TaskGroupCases, TaskDeleteCases, ActivityCases, unittest.Test
             self.assertEqual(restarted.get("/api/activities").json()[0]["task_title"], "PostgreSQL保存")
         with database() as db:
             db.execute("UPDATE sessions SET expires_at=? WHERE token_hash=?", (time.time() + 30, token_hash(self.token)))
-        self.assertEqual(self.client.get("/api/auth/me").status_code, 200)
+        self.assertEqual(self.client.get("/api/tasks").status_code, 200)
         self.assertEqual(self.client.post("/api/auth/logout").status_code, 200)
         self.assertEqual(self.client.get("/api/tasks").status_code, 401)
 
@@ -120,7 +121,7 @@ class PostgresTest(TaskGroupCases, TaskDeleteCases, ActivityCases, unittest.Test
                 return 200
             except HTTPException as error:
                 return error.status_code
-        self.user_id = self.client.get("/api/auth/me").json()["id"]
+        self.user_id = current_user_id(self.client)
         with patch.dict(os.environ, {"AI_GLOBAL_DAILY_LIMIT": "2"}), ThreadPoolExecutor(max_workers=4) as executor:
             results = list(executor.map(reserve, range(6)))
         self.assertEqual(results.count(200), 2)

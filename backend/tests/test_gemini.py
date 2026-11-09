@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.database import database
+from helpers import current_user_id
 
 
 class GeminiTest(unittest.TestCase):
@@ -90,7 +91,7 @@ class GeminiTest(unittest.TestCase):
         self.assertEqual(self.suggest().status_code, 409)
 
     def test_survey_history_is_limited_ordered_and_owned(self):
-        owner_id = self.client.get("/api/auth/me").json()["id"]
+        owner_id = current_user_id(self.client)
         today = datetime.now(timezone(timedelta(hours=9))).date()
         for days_ago in range(1, 10):
             for hour, level in [(8, "normal"), (9, "good")]:
@@ -143,7 +144,7 @@ class GeminiTest(unittest.TestCase):
         self.assertEqual([entry["day"] for entry in payload["recent_conditions"]], expected_days)
 
     def test_activity_history_is_sent(self):
-        user_id = self.client.get("/api/auth/me").json()["id"]
+        user_id = current_user_id(self.client)
         now = datetime.now(timezone.utc)
         rows = [
             # (何日前, 種類, タスク名, 調子, 何番目, 結果)

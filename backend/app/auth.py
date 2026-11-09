@@ -140,11 +140,6 @@ def login(data: Credentials, request: Request, response: Response):
     return issue({"id": row["id"], "username": row["username"]}, response)
 
 
-@router.get("/me")
-def me(user: User):
-    return user
-
-
 @router.post("/logout")
 def logout(user: User, credentials: Annotated[HTTPAuthorizationCredentials, Depends(bearer)]):
     with database() as db:

@@ -40,7 +40,7 @@ class AccountsCalendarTest(unittest.TestCase):
         return {"window_start": (now - timedelta(minutes=1)).isoformat(), "window_end": (now + timedelta(days=7)).isoformat(), "events": events or []}
 
     def test_auth_login_logout_expiry_hashes(self):
-        self.assertEqual(self.client.get("/api/auth/me").json()["username"], "alice")
+        self.assertEqual(self.a["user"]["username"], "alice")
         with database() as db:
             hashed = db.execute("SELECT password_hash FROM users WHERE username='alice'").fetchone()[0]
             self.assertNotEqual(hashed, "test-password-123")
@@ -59,7 +59,7 @@ class AccountsCalendarTest(unittest.TestCase):
 
     def test_anonymous_protected_and_rate_limit(self):
         self.client.headers.pop("Authorization")
-        for path in ["/api/tasks", "/api/condition", "/api/calendar", "/api/config", "/api/auth/me"]:
+        for path in ["/api/tasks", "/api/condition", "/api/calendar", "/api/config"]:
             self.assertEqual(self.client.get(path).status_code, 401)
         self.assertEqual(self.client.post("/api/recommendations", json={"available_minutes": 30}).status_code, 401)
         for _ in range(11):
