@@ -20,22 +20,21 @@ export default function FocusCard({ activity, disabled, act }: {
   const rest = activity.kind === "rest";
   const left = Date.parse(activity.ends_at ?? activity.created_at) - now;
   const over = left <= 0;
-  const name = rest ? "ひと休み" : activity.task_title ?? "タスク";
+  const name = rest ? "休憩" : activity.task_title ?? "タスク";
   return <Card title={rest ? "☕ 休憩中" : "⏱ 取り組み中"} right={<Hint>予定 {activity.planned_minutes}分</Hint>}>
     <Text style={s.name}>{name}</Text>
     <View accessible accessibilityRole="timer" accessibilityLabel={over ? `予定時間を${formatDuration(left)}過ぎました` : `残り${formatDuration(left)}`}>
       <Text style={[s.time, over && s.over]}>{over ? `+${formatDuration(left)}` : formatDuration(left)}</Text>
-      <Hint>{over ? (rest ? "休憩の時間が終わりました。" : "時間になりました。終わった？") : "残り時間"}</Hint>
+      <Hint>{over ? "時間になりました" : "残り時間"}</Hint>
     </View>
     {partial ? <>
-      <Hint>どうしますか？</Hint>
       <Row>
         <Button primary title="続ける（＋10分）" disabled={disabled} onPress={() => act("extend", 10)} />
         <Button title="ここでやめる" disabled={disabled} onPress={() => act("partial")} />
         <Button small title="戻る" disabled={disabled} onPress={() => setPartial(false)} />
       </Row>
     </> : <Row>
-      <Button primary title={rest ? "休憩おわり" : "✓ 終わった"} disabled={disabled} onPress={() => act("finish")} />
+      <Button primary title={rest ? "休憩終了" : "✓ 完了"} disabled={disabled} onPress={() => act("finish")} />
       {!rest && <Button title="途中まで" disabled={disabled} onPress={() => setPartial(true)} />}
       {rest && <Button title="＋5分" disabled={disabled} onPress={() => act("extend", 5)} />}
       <Button small title="やめる" disabled={disabled} onPress={() => act("stop")} />

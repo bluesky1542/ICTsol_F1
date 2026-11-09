@@ -56,15 +56,14 @@ export default function ScheduleCalendar({ snapshot }: { snapshot: CalendarSnaps
     <View style={s.agenda}>
       <View style={s.agendaHeading}><Text style={s.heading}>{selected.getMonth() + 1}月{selected.getDate()}日（{weekdays[(selected.getDay() + 6) % 7]}）</Text>
         <Text style={s.caption}>{entries.length}件</Text></View>
-      {!snapshot.sync ? <Text style={s.caption}>まだ予定がありません。下から追加できます。</Text>
-        : (!covered || snapshot.sync.source === "manual") && <Text style={s.caption}>{snapshot.sync.source === "imported" ? "この日は取り込み範囲外のため、表示されていない予定があるかもしれません。" : "手入力した予定だけを表示しています。"}</Text>}
+      {!!snapshot.sync && !covered && snapshot.sync.source === "imported" && <Text style={s.caption}>取り込み範囲外の日です。</Text>}
       {!entries.length && <Text style={s.empty}>予定はありません。</Text>}
       {entries.map(event => <View key={event.event_key} style={s.eventRow}>
         <View style={s.rail}><View style={s.eventDot} /><View style={s.eventLine} /></View>
         <View style={s.event}>
           <Text style={s.eventTime}>{eventTime(event, selected)}</Text>
           <Text style={s.eventTitle}>予定あり</Text>
-          {(event.continuesBefore || event.continuesAfter) && <Text style={s.caption}>{[event.continuesBefore && "前日から続く予定", event.continuesAfter && "翌日へ続く予定"].filter(Boolean).join(" · ")}</Text>}
+          {(event.continuesBefore || event.continuesAfter) && <Text style={s.caption}>{[event.continuesBefore && "前日から", event.continuesAfter && "翌日まで"].filter(Boolean).join(" · ")}</Text>}
         </View>
       </View>)}
     </View>

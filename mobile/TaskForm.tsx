@@ -14,14 +14,14 @@ const levels: [Level, string][] = [["low", "低"], ["medium", "中"], ["high", "
 // 入力値を確かめて送信用の形にする。正しくなければ日本語のエラーを投げる。
 function payload(form: { title: string; minutes: string; date: string; time: string; priority: Level; concentration: Level; place: string; groupId: number | null }): TaskPayload {
   if (!form.title.trim()) throw new Error("タスク名を入力してください。");
-  if (!/^\d+$/.test(form.minutes) || Number(form.minutes) < 1 || Number(form.minutes) > 1440) throw new Error("時間は1〜1440分の整数で入力してください。");
+  if (!/^\d+$/.test(form.minutes) || Number(form.minutes) < 1 || Number(form.minutes) > 1440) throw new Error("時間は1〜1440分で入力してください。");
   const date = form.date.trim(), time = form.time.trim();
-  if (time && !date) throw new Error("締切の時刻を入れるときは、日付も入れてください。");
+  if (time && !date) throw new Error("締切の日付も入力してください。");
   if (date && (!/^\d{4}-\d{2}-\d{2}$/.test(date) ||
       Number.isNaN(Date.parse(date)) || new Date(date).toISOString().slice(0, 10) !== date)) {
-    throw new Error("締切の日付は 2026-11-05 のように、実在する日付で入力してください。");
+    throw new Error("締切の日付が正しくありません。");
   }
-  if (time && !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) throw new Error("締切の時刻は 18:30 のように入力してください。");
+  if (time && !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) throw new Error("締切の時刻が正しくありません。");
   return { title: form.title.trim(), minutes: Number(form.minutes), deadline: date ? (time ? `${date}T${time}` : date) : null,
     priority: form.priority, concentration: form.concentration, place: form.place.trim(), group_id: form.groupId };
 }
@@ -56,13 +56,13 @@ export default function TaskForm({ task, groups, defaultGroupId = null, initialD
       <GroupChips groups={groups} value={groupId} disabled={disabled} unclassified={false}
         set={value => setGroupId(value === "all" || value === groupId ? null : value)} />
     </>}
-    <Input label="タスク名" hideLabel value={title} set={setTitle} placeholder="タスク名（例：レポートの下書き）" disabled={disabled} />
+    <Input label="タスク名" hideLabel value={title} set={setTitle} placeholder="タスク名" disabled={disabled} />
     <Label>かかる時間</Label>
     <Row>
       <View style={s.minutesInput}><Input label="かかる時間（分）" hideLabel value={minutes} set={setMinutes} numeric placeholder="分" disabled={disabled} /></View>
       <Text style={ui.hint}>分</Text>
     </Row>
-    <Label>締切（なくてもOK・時刻は省略可）</Label>
+    <Label>締切</Label>
     <Row>
       <TimeField kind="date" label="締切の日付" value={date} set={setDate} disabled={disabled} />
       <TimeField label="締切の時刻" value={time} set={setTime} disabled={disabled} />
@@ -71,9 +71,9 @@ export default function TaskForm({ task, groups, defaultGroupId = null, initialD
     </Row>
     <Label>優先度</Label><Row>{levels.map(([key, text]) => <Button key={key} small title={text}
       selected={priority === key} disabled={disabled} onPress={() => setPriority(key)} />)}</Row>
-    <Label>必要な集中度</Label><Row>{levels.map(([key, text]) => <Button key={key} small title={text}
+    <Label>集中度</Label><Row>{levels.map(([key, text]) => <Button key={key} small title={text}
       selected={concentration === key} disabled={disabled} onPress={() => setConcentration(key)} />)}</Row>
-    <Input label="場所（空欄ならどこでも）" value={place} set={setPlace} placeholder="例：自宅" disabled={disabled} />
+    <Input label="場所" value={place} set={setPlace} placeholder="例：自宅" disabled={disabled} />
     <Row>
       <Button primary title={task ? "保存" : "追加"} disabled={disabled} onPress={() => void run(async () => {
         await save(payload({ title, minutes, date, time, priority, concentration, place, groupId }));

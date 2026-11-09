@@ -66,12 +66,12 @@ export async function api<T>(path: string, method = "GET", body?: unknown): Prom
     }
     if (!response.ok) {
       if (data !== UNREADABLE && typeof data?.detail === "string") throw new Error(data.detail);
-      throw new Error(response.status >= 500 ? "サーバーが応答していません。少し待ってから↻で再読み込みしてください。" : "入力内容を確認してください。");
+      throw new Error(response.status >= 500 ? "サーバーが応答しません。しばらくしてから↻で再読み込みしてください。" : "入力内容を確認してください。");
     }
     if (data === UNREADABLE) throw new Error("サーバーの応答を読み取れませんでした。↻で再読み込みしてください。");
     return data as T;
   } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") throw new Error("通信がタイムアウトしました。もう一度試してください。");
+    if (error instanceof Error && error.name === "AbortError") throw new Error("通信がタイムアウトしました。もう一度お試しください。");
     // オフラインや接続先に届かないときは英語のメッセージになるため、日本語に置き換える。
     if (error instanceof TypeError) throw new Error("サーバーに接続できませんでした。通信環境を確認してください。");
     throw error;

@@ -153,7 +153,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
   useEffect(() => { if (!conditionFresh) invalidate(); }, [conditionFresh]);
   useEffect(() => {
     if (dueAt === null || todayReflection) return;
-    return scheduleNotification(dueAt, "今日の振り返りの時間です", "おつかれさまでした。3つの質問に答えて1日を締めくくりましょう。",
+    return scheduleNotification(dueAt, "振り返りの時間です", "今日の振り返りをしましょう。",
       () => { setNow(Date.now()); changeTab("now"); });
   }, [dueAt, !!todayReflection]);
   tasksRef.current = tasks;
@@ -222,7 +222,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
   }
   function startEdit(task: Task) { setEditing(task.id); scrollToForm(); }
   function integer(value: string) {
-    if (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 1440) throw new Error("時間は1〜1440分の整数で入力してください。");
+    if (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 1440) throw new Error("時間は1〜1440分で入力してください。");
     return Number(value);
   }
   // id が null なら追加、それ以外はそのタスクを更新する。
@@ -230,7 +230,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
     await api<Task>(id === null ? "/tasks" : `/tasks/${id}`, id === null ? "POST" : "PUT", value);
     setTasks(await api<Task[]>("/tasks"));
     if (id !== null) resetForm();
-    invalidate(); setNotice(id === null ? `「${value.title}」を追加しました。` : "タスクを保存しました。");
+    invalidate(); setNotice(id === null ? `「${value.title}」を追加しました。` : "保存しました。");
   }
   async function toggleTask(task: Task) {
     await api<Task>(`/tasks/${task.id}`, "PATCH", { completed: !task.completed });
@@ -249,7 +249,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
     await putGroup(task, target.groupId);
     await reloadTasksAndGroups(); setMoving(null);
     setUndo({ text: createdGroupId === undefined ? `「${task.title}」を「${target.name}」に移しました。`
-      : `グループ「${target.name}」を作って「${task.title}」を入れました。`, moves: [{ taskId: task.id, group_id: task.group_id }], createdGroupId });
+      : `「${target.name}」を作成し、「${task.title}」を移しました。`, moves: [{ taskId: task.id, group_id: task.group_id }], createdGroupId });
   }
   // タスクどうしを重ねたとき。先に仮の名前でグループを作って2つを入れ、そのあと見出しで名前を付けてもらう。
   async function groupTogether(dragged: Task, partner: Task) {
@@ -258,7 +258,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
     for (const task of [partner, dragged]) await putGroup(task, created.id);
     await reloadTasksAndGroups(); setMoving(null);
     setRenaming(created.id); setRenameDraft("");
-    setUndo({ text: `「${partner.title}」と「${dragged.title}」をグループにしました。名前を付けてください。`,
+    setUndo({ text: `「${partner.title}」と「${dragged.title}」をグループにしました。`,
       moves: [partner, dragged].map(task => ({ taskId: task.id, group_id: task.group_id })), createdGroupId: created.id });
   }
   // 一覧の見出しからグループの名前を変える。
@@ -266,11 +266,11 @@ export default function Dashboard({ username, logout }: { username: string; logo
     const name = text.trim();
     if (!name) throw new Error("グループ名を入力してください。");
     if (name !== group.name) {
-      if (groupByName(groups, name)) throw new Error(`「${name}」というグループはもうあります。別の名前にしてください。`);
+      if (groupByName(groups, name)) throw new Error(`「${name}」は既にあります。`);
       await api(`/groups/${group.id}`, "PUT", { name });
       setGroups(await api<TaskGroup[]>("/groups"));
     }
-    setRenaming(null); setNotice(`グループの名前を「${name}」にしました。`);
+    setRenaming(null); setNotice(`名前を「${name}」に変更しました。`);
   }
   async function undoMove(saved: NonNullable<typeof undo>) {
     for (const move of saved.moves) {
@@ -292,7 +292,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
     if (!name) throw new Error("グループ名を入力してください。");
     const found = groupByName(groups, name);
     if (found) {
-      if (found.id === task.group_id) throw new Error(`もう「${name}」に入っています。`);
+      if (found.id === task.group_id) throw new Error(`既に「${name}」に入っています。`);
       await moveTask(task, { groupId: found.id, name: found.name });
       return;
     }
@@ -366,7 +366,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
     askNotificationPermission();
     await api<Activity>("/activities", "POST", { task_id: taskId, rank, minutes });
     await loadActivities(); setRestOpen(false);
-    setNotice(taskId === null ? `${minutes}分の休憩を始めました。ゆっくり休みましょう。` : "取り組みを始めました。終わったら「終わった」を押してください。");
+    setNotice(taskId === null ? `${minutes}分の休憩を始めました。` : "開始しました。");
     scroll.current?.scrollTo({ y: 0, animated: true });
   }
   async function act(action: ActivityAction, extra?: number) {
@@ -376,19 +376,19 @@ export default function Dashboard({ username, logout }: { username: string; logo
     const [nextTasks] = await Promise.all([api<Task[]>("/tasks"), loadActivities()]);
     setTasks(nextTasks); invalidate();
     setNotice(action === "extend" ? `${extra}分延長しました。`
-      : action === "finish" ? (activity.kind === "rest" ? "休憩おわり。おつかれさまでした。" : `${name}を完了にしました。おつかれさまでした。`)
-      : action === "partial" ? `${name}を途中までとして記録しました。` : `${name}をやめました。`);
+      : action === "finish" ? (activity.kind === "rest" ? "休憩を終えました。" : `${name}を完了しました。`)
+      : action === "partial" ? `${name}を途中までで記録しました。` : `${name}をやめました。`);
   }
   async function saveReflection() {
     if (japanToday(Date.now()) !== reflectionDay) {
       setNow(Date.now());
-      throw new Error("日付が変わりました。今日の振り返りを入力し直してください。");
+      throw new Error("日付が変わりました。もう一度入力してください。");
     }
-    if (!achievement || !satisfaction || !tiredness) throw new Error("振り返りの3つの質問すべてに答えてください。");
+    if (!achievement || !satisfaction || !tiredness) throw new Error("すべての項目に答えてください。");
     const saved = await api<Reflection>("/reflections/today", "PUT", { achievement, satisfaction, tiredness, comment: comment.trim() });
     setReflections(previous => [saved, ...previous.filter(r => r.day !== saved.day)].slice(0, 14));
     setReflectionOpen(false);
-    setNotice("今日の振り返りを保存しました。おつかれさまでした。");
+    setNotice("振り返りを保存しました。");
   }
   const compare = (first: Task, second: Task) => deadlineKey(first.deadline).localeCompare(deadlineKey(second.deadline));
   const filtered = filterTasks(tasks, groupFilter);
@@ -397,9 +397,9 @@ export default function Dashboard({ username, logout }: { username: string; logo
   const editingTask = editing === null ? null : tasks.find(task => task.id === editing) ?? null;
   const filterGroupId = typeof groupFilter === "number" ? groupFilter : null;
   const places = [...new Set(tasks.map(t => t.place.trim()).filter(Boolean))];
-  const aiBlocked = !connected ? "サーバーに接続できていません。↻で再読み込みしてください。"
+  const aiBlocked = !connected ? "サーバーに接続できません。↻で再読み込みしてください。"
     : !aiConfigured ? "AI提案は準備中です。"
-    : !conditionFresh ? "先に「今の調子」を選んでください。" : "";
+    : !conditionFresh ? "先に今の調子を選んでください。" : "";
   const setAvailableAndReset = (value: string) => { setAvailable(value); invalidate(); };
   // 休憩時間の初期の選択。使える時間に収まる範囲で15分に近いもの。
   const restDefault = [15, 10, 5].find(value => value <= (suggestions?.available_minutes ?? 15)) ?? 5;
@@ -409,11 +409,11 @@ export default function Dashboard({ username, logout }: { username: string; logo
     askNotificationPermission();
     void run(async () => {
       const end = normalizeTime(text);
-      if (!end) throw new Error("終了時刻は 18:30 のように入力してください。");
+      if (!end) throw new Error("終了時刻は 18:30 の形で入力してください。");
       const saved = await api<WorkPlan>("/reflections/plan", "PUT", { end_time: end });
       setPlan(saved); setNow(Date.now());
       const due = Date.parse(`${saved.day}T${saved.end_time}:00+09:00`) - REFLECTION_LEAD;
-      setNotice(due <= Date.now() ? "終了予定が近いので、振り返りを出しました。" : "終了予定を保存しました。");
+      setNotice(due <= Date.now() ? "振り返りを表示しました。" : "終了時刻を保存しました。");
     });
   }
 
@@ -425,12 +425,11 @@ export default function Dashboard({ username, logout }: { username: string; logo
     const choices: GroupRef[] = [...groups.map(group => ({ groupId: group.id, name: group.name })), { groupId: null, name: "未分類" }];
     return <View style={s.picker}>
       <Row>
-        <View style={s.nameInput}><Input label="グループ名" hideLabel value={groupName} set={setGroupName} placeholder="例：レポート課題" disabled={busy} maxLength={30} /></View>
+        <View style={s.nameInput}><Input label="グループ名" hideLabel value={groupName} set={setGroupName} placeholder="グループ名" disabled={busy} maxLength={30} /></View>
         <Button small primary title="決定" disabled={busy || !name || found?.id === task.group_id} onPress={() => void run(() => moveByName(task, groupName))} />
       </Row>
-      {!!name && <Hint>{found ? found.id === task.group_id ? `もう「${found.name}」に入っています` : `「${found.name}」に入れます` : `新しいグループ「${name}」を作って入れます`}</Hint>}
+      {!!name && <Hint>{found ? found.id === task.group_id ? `既に「${found.name}」に入っています` : `「${found.name}」に移します` : `「${name}」を新しく作ります`}</Hint>}
       {!!similar.length && <Row>{similar.map(group => <Button key={group.id} small title={group.name} disabled={busy} onPress={() => setGroupName(group.name)} />)}</Row>}
-      <Label>または選ぶ</Label>
       <Row>{choices.map(target => <View key={String(target.groupId)} style={{ maxWidth: "100%" }}>
         <Button small title={target.name} selected={task.group_id === target.groupId}
           disabled={busy || task.group_id === target.groupId} onPress={() => void run(() => moveTask(task, target))} />
@@ -453,7 +452,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
         </Row>
       </View>;
     }
-    const label = `${section.name}・未完了 ${section.tasks.length}件`;
+    const label = `${section.name}（${section.tasks.length}）`;
     if (!group) return <View style={s.headingRow}><View style={{ flex: 1 }}><Label>{label}</Label></View></View>;
     const hidden = collapsed.includes(group.id);
     return <View style={s.headingRow}>
@@ -480,7 +479,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
     return <View key={task.id} ref={draggable ? dropArea(key, { kind: "task", taskId: task.id }) : undefined}
       style={[s.taskRow, drag?.task.id === task.id && s.dragging, drag?.key === key && s.dropHover]}>
       <Pressable accessibilityRole="button" accessibilityLabel={`${task.title}を編集`} disabled={busy}
-        accessibilityHint={draggable && !isDemo ? "長押しして、ほかのタスクに重ねるとグループにでき、グループの見出しに離すとそのグループへ移せます" : undefined}
+        accessibilityHint={draggable && !isDemo ? "長押ししてドラッグすると、グループを作成・変更できます" : undefined}
         onPress={() => startEdit(task)} delayLongPress={300}
         onLongPress={draggable ? event => startDrag(task, event.nativeEvent.pageY) : undefined}
         onPressIn={draggable && Platform.OS === "web" ? event => {
@@ -570,7 +569,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
                 setCondition(saved); setNow(Date.now()); invalidate(); setNotice("今の調子を保存しました。");
               })} />)}</Row>
             {condition && !conditionFresh && <Hint warn>日付が変わりました。今日の調子を選んでください。</Hint>}
-            <Label>今日は何時まで作業する？</Label>
+            <Label>作業の終了時刻</Label>
             <Row>
               <TimeField label="作業の終了時刻" value={endDraft} set={setEndDraft} disabled={busy || !connected || isDemo} />
               <Button small primary title={workEnd ? "変更" : "決定"} disabled={busy || !connected || isDemo || !endDraft || endDraft === workEnd}
@@ -579,51 +578,50 @@ export default function Dashboard({ username, logout }: { username: string; logo
             {dueAt !== null && !todayReflection && !reflectionDue && <Hint>🔔 {clock(dueAt)}ごろに振り返りをお知らせします</Hint>}
           </Card>
 
-          <Card title="AIに次の一歩を提案してもらう">
+          <Card title="AI提案">
             <Label>使える時間</Label>
             <Row>
               <View style={s.minutesInput}><Input label="使える時間（分）" hideLabel value={available} set={setAvailableAndReset} numeric placeholder="分" disabled={busy} /></View>
               <Text style={ui.hint}>分</Text>
             </Row>
-            {calendarLinked && <Row><Button small title={useCalendar ? "✓ 次の予定までに収める" : "予定を考慮しない"} selected={useCalendar} disabled={busy}
+            {calendarLinked && <Row><Button small title={useCalendar ? "✓ 次の予定まで" : "次の予定まで"} selected={useCalendar} disabled={busy}
               onPress={() => { setUseCalendar(!useCalendar); invalidate(); }} /></Row>}
 
-            <Label>いる場所</Label>
+            <Label>場所</Label>
             {!!places.length && <Row>{places.map(p => <Button key={p} small title={p} disabled={busy}
               selected={currentPlace.trim() === p} onPress={() => { setCurrentPlace(currentPlace.trim() === p ? "" : p); invalidate(); }} />)}</Row>}
-            <Input label="いる場所" hideLabel value={currentPlace} set={v => { setCurrentPlace(v); invalidate(); }} placeholder="例：自宅（空欄＝どこでも）" disabled={busy} />
+            <Input label="場所" hideLabel value={currentPlace} set={v => { setCurrentPlace(v); invalidate(); }} placeholder="例：自宅" disabled={busy} />
 
-            <Button primary title={busy ? "考え中…" : "提案してもらう"} disabled={busy || !!aiBlocked}
+            <Button primary title={busy ? "考え中…" : "提案する"} disabled={busy || !!aiBlocked}
               onPress={() => void run(async () => {
                 invalidate();
                 const result = await api<Suggestions>("/recommendations", "POST", { available_minutes: integer(available), place: currentPlace.trim(), use_calendar: calendarLinked && useCalendar });
                 setSuggestions(result);
               })} />
             {!!aiBlocked && <Hint>{aiBlocked}</Hint>}
-            <Details title="送信先：Google（Gemini）">
-              <Hint>候補タスク・今の調子・使える時間・場所と、過去7回分の朝の調子と振り返り（コメントを含む）、過去14日分の取り組み記録（選んだタスク名・休憩・結果）を送信します。</Hint>
-              <Hint>無料枠では送信内容がGoogleの製品改善に使われる場合があります。個人情報・機密情報は入力しないでください。</Hint>
+            <Details title="送信先：Google Gemini">
+              <Hint>タスク・調子・場所と、最近の振り返り・取り組みの記録を送信します。Googleの製品改善に使われる場合があるため、個人情報は入力しないでください。</Hint>
             </Details>
           </Card>
 
-          {suggestions && <Card title={suggestions.source === "ai" ? "どれか1つ選んでください" : "今できるタスクはありません"}
+          {suggestions && <Card title={suggestions.source === "ai" ? "提案" : "今できるタスクはありません"}
             right={<Hint>{suggestions.available_minutes}分</Hint>}>
-            {!!activity && <Hint>今の取り組みがあります。新しく選ぶと、今の取り組みは「中断」として記録されます。</Hint>}
+            {!!activity && <Hint>新しく選ぶと、今の取り組みは中断になります。</Hint>}
             {suggestions.choices.map(({ task, reason }, index) => {
               const active = activity?.kind === "task" && activity.task_id === task.id;
               return <View key={task.id} style={s.suggestion}>
                 <Text style={s.taskTitle}>{index === 0 ? "おすすめ　" : ""}{task.title}　<Text style={ui.hint}>{task.minutes}分</Text></Text>
                 <Text style={s.body}>{reason}</Text>
-                <Button title={active ? "✓ 取り組み中" : `これにする（${Math.min(task.minutes, 240)}分タイマー）`} selected={active}
+                <Button title={active ? "✓ 取り組み中" : `これにする（${Math.min(task.minutes, 240)}分）`} selected={active}
                   disabled={busy || isDemo || active} onPress={() => void run(() => choose(task.id, index + 1, Math.min(task.minutes, 240)))} />
               </View>;
             })}
             <View style={[s.suggestion, s.rest]}>
-              <Text style={s.taskTitle}>ひと休みする</Text>
+              <Text style={s.taskTitle}>休憩</Text>
               <Text style={s.body}>{suggestions.rest_reason}</Text>
               {activity?.kind === "rest" ? <Button title="✓ 休憩中" selected disabled onPress={() => undefined} />
                 : restOpen ? <>
-                  <Label>何分休む？</Label>
+                  <Label>休憩時間</Label>
                   <Row>{[5, 10, 15, 30].map(value => <Button key={value} small title={`${value}分`}
                     selected={value === restDefault} disabled={busy || isDemo} onPress={() => void run(() => choose(null, null, value))} />)}
                     <Button small title="やめる" disabled={busy} onPress={() => setRestOpen(false)} /></Row>
@@ -633,7 +631,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
 
           {/* 振り返り：通知を待たずに答えたいとき・答え直したいときの入口（過去の回答は表示しない） */}
           <Card title="今日の振り返り" right={todayReflection ? <Hint>回答済み ✓</Hint> : workEnd ? <Hint>{workEnd}まで</Hint> : undefined}>
-            {!showReflection && <Row><Button small title={todayReflection ? "答え直す" : "今すぐ振り返る"} disabled={busy || isDemo}
+            {!showReflection && <Row><Button small title={todayReflection ? "答え直す" : "振り返る"} disabled={busy || isDemo}
               onPress={() => setReflectionOpen(true)} /></Row>}
           </Card>
         </View>
@@ -645,7 +643,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
             <TaskForm key={editingTask?.id ?? "new"} task={editingTask} groups={groups} defaultGroupId={filterGroupId}
               disabled={busy || !connected} run={run} save={value => saveTask(value, editingTask?.id ?? null)}
               cancel={editingTask ? resetForm : undefined} />
-            <Label>グループで絞り込み</Label>
+            <Label>絞り込み</Label>
             <GroupChips groups={groups} value={groupFilter} all unclassified={tasks.some(task => task.group_id === null)}
               disabled={busy} set={setGroupFilter} />
             <TaskDonut tasks={filtered} now={now} />
@@ -696,18 +694,18 @@ export default function Dashboard({ username, logout }: { username: string; logo
         <Label>今日やったこと</Label>
         {log.length ? <View style={s.log}>{log.map(item => <Text key={item.id} style={s.logItem}>
           <Text style={ui.hint}>{item.time}　</Text>{item.text}</Text>)}</View>
-          : <Hint>今日は提案から選んだ記録はありません。</Hint>}
-        <Label>タスクはできた？</Label>
+          : <Hint>記録はありません。</Hint>}
+        <Label>達成度</Label>
         <Row>{achievements.map(([key, text]) => <Button key={key} title={text} selected={achievement === key}
           disabled={busy || isDemo} onPress={() => setAchievement(key)} />)}</Row>
-        <Label>AIの提案は役に立った？</Label>
+        <Label>AI提案の満足度</Label>
         <Stars value={satisfaction} set={setSatisfaction} disabled={busy || isDemo} />
-        <Label>今の疲れ具合は？</Label>
+        <Label>疲れ具合</Label>
         <Row>{conditions.map(([key, text]) => <Button key={key} small title={text} selected={tiredness === key}
           disabled={busy || isDemo} onPress={() => setTiredness(key)} />)}</Row>
-        <TextInput accessibilityLabel="ひとこと" style={ui.input} value={comment} onChangeText={setComment} editable={!busy && !isDemo}
-          placeholder="ひとこと（任意）" placeholderTextColor="#64748b" maxLength={200} multiline />
-        <Button primary title={todayReflection ? "更新する" : "保存する"} disabled={busy || !connected || isDemo}
+        <TextInput accessibilityLabel="コメント" style={ui.input} value={comment} onChangeText={setComment} editable={!busy && !isDemo}
+          placeholder="コメント（任意）" placeholderTextColor="#64748b" maxLength={200} multiline />
+        <Button primary title={todayReflection ? "更新" : "保存"} disabled={busy || !connected || isDemo}
           onPress={() => void run(saveReflection)} />
         {!!error && <Text accessibilityRole="alert" style={s.error}>{error}</Text>}
       </ScrollView>

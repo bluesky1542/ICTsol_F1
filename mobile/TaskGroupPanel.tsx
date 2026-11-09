@@ -36,8 +36,8 @@ export default function TaskGroupPanel({ groups, disabled, run, changed }: {
     <Row><Button small title="作成" disabled={disabled || groups.length >= 30} onPress={() => void run(() => save(null, name))} /></Row>
     {groups.map(group => <View key={group.id} style={{ gap: 8 }}>
       {editing === group.id ? <>
-        <Input label="グループ名の変更" value={draft} set={setDraft} disabled={disabled} maxLength={30} />
-        <Row><Button small title="名前を保存" disabled={disabled} onPress={() => void run(() => save(group.id, draft))} />
+        <Input label="新しい名前" value={draft} set={setDraft} disabled={disabled} maxLength={30} />
+        <Row><Button small title="保存" disabled={disabled} onPress={() => void run(() => save(group.id, draft))} />
           <Button small title="やめる" disabled={disabled} onPress={() => setEditing(null)} /></Row>
       </> : <Row>
         <View style={{ maxWidth: "100%" }}><Button small title={group.name} label={`${group.name}の名前を変更`} disabled={disabled}
