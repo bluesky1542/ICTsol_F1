@@ -40,7 +40,6 @@ export default function FocusCard({ activity, disabled, act }: {
       {rest && <Button title="＋5分" disabled={disabled} onPress={() => act("extend", 5)} />}
       <Button small title="やめる" disabled={disabled} onPress={() => act("stop")} />
     </Row>}
-    {!rest && !partial && <Hint>「終わった」を押すと、このタスクを完了にします。</Hint>}
   </Card>;
 }
 

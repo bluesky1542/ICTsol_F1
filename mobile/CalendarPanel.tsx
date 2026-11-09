@@ -3,7 +3,7 @@ import { Platform, StyleSheet, Text, TextInput } from "react-native";
 import { api } from "./api";
 import ScheduleCalendar from "./ScheduleCalendar";
 import { parseLocalDateTime, type CalendarSnapshot } from "./calendarView";
-import { Button, Card, Details, Hint, Label, Row, s as ui } from "./ui";
+import { Button, Card, Hint, Label, Row, s as ui } from "./ui";
 
 type Snapshot = CalendarSnapshot;
 type Props = { disabled: boolean; run: (work: () => Promise<void>) => Promise<void>; changed: (linked: boolean) => void; reload: number };
@@ -67,7 +67,6 @@ export default function CalendarPanel({ disabled, run, changed, reload }: Props)
     <Label>予定を追加</Label>
     <TextInput accessibilityLabel="予定の開始日時" placeholder="開始　2026-10-20 14:00" placeholderTextColor="#64748b" value={start} onChangeText={setStart} editable={!disabled} style={ui.input} />
     <TextInput accessibilityLabel="予定の終了日時" placeholder="終了　2026-10-20 15:00" placeholderTextColor="#64748b" value={end} onChangeText={setEnd} editable={!disabled} style={ui.input} />
-    <Hint>今から7日以内の予定（端末の時刻）</Hint>
     {/* 入力欄のそばに結果を出し、画面上部のエラーに気づかず失敗する状態を防ぐ。 */}
     <Button primary title="追加" disabled={disabled} onPress={() => void run(async () => {
       setManualMessage(null);
@@ -87,11 +86,7 @@ export default function CalendarPanel({ disabled, run, changed, reload }: Props)
         <Button primary title="取り込む" disabled={disabled || !selected.length} onPress={() => void run(sync)} /></>}
     </>}
 
-    <Details>
-      <Hint>サーバーに保存するのは予定の開始・終了時刻だけです。タイトル・説明・参加者は送信しません。そのため予定は「予定あり」と表示します。</Hint>
-      <Hint>端末からの取り込みはボタンを押したときだけ行います。予定が変わったときや24時間経ったら取り込み直してください。終日の予定は一日中「予定あり」として扱います。手入力の予定は取り込み直す必要はありません。</Hint>
-      {snapshot.sync && <Hint>最終更新：{new Date(snapshot.sync.synced_at).toLocaleString("ja-JP")}</Hint>}
-    </Details>
+    {snapshot.sync && <Hint>最終更新：{new Date(snapshot.sync.synced_at).toLocaleString("ja-JP")}</Hint>}
     {!!snapshot.sync && <Row>
       <Button small title={confirmDelete ? "本当に削除する" : "保存した予定をすべて削除"} disabled={disabled}
         onPress={() => confirmDelete ? void run(async () => {

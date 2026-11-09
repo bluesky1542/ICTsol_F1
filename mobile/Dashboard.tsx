@@ -87,6 +87,8 @@ export default function Dashboard({ username, logout }: { username: string; logo
   const scrollY = useRef(0);
   const scrollBox = useRef<View>(null);
   const tasksRef = useRef<Task[]>([]);
+  // マウスでタスクを押している間だけ持つ。長押しを待たず、動かし始めたらドラッグにする（タッチはスクロールと区別するため長押しのまま）。
+  const pressing = useRef<{ task: Task; y: number } | null>(null);
   const groupsRef = useRef<TaskGroup[]>([]);
   // 移動の直後だけ出す「元に戻す」。moves は移したタスクと元のグループ。
   // createdGroupId は、名前を入れて新しく作ったグループ（元に戻すときに空なら消す）。
@@ -413,7 +415,6 @@ export default function Dashboard({ username, logout }: { username: string; logo
     const similar = name ? groups.filter(group => group.name.includes(name) && group.name !== name).slice(0, 5) : [];
     const choices: GroupRef[] = [...groups.map(group => ({ groupId: group.id, name: group.name })), { groupId: null, name: "未分類" }];
     return <View style={s.picker}>
-      <Hint>「{task.title}」を入れるグループの名前を入れてください。ない名前なら新しく作ります。</Hint>
       <Row>
         <View style={s.nameInput}><Input label="グループ名" hideLabel value={groupName} set={setGroupName} placeholder="例：レポート課題" disabled={busy} maxLength={30} /></View>
         <Button small primary title="決定" disabled={busy || !name || found?.id === task.group_id} onPress={() => void run(() => moveByName(task, groupName))} />
@@ -435,10 +436,9 @@ export default function Dashboard({ username, logout }: { username: string; logo
     if (group && renaming === group.id) {
       const save = () => void run(() => renameGroup(group, renameDraft));
       return <View style={s.picker}>
-        <Hint>グループの名前を入れてください（いまは「{group.name}」）</Hint>
         <Row>
           <View style={s.nameInput}><Input label={`${group.name}の新しい名前`} hideLabel value={renameDraft} set={setRenameDraft}
-            placeholder="例：レポート課題" disabled={busy} maxLength={30} autoFocus submit={save} /></View>
+            placeholder="グループ名" disabled={busy} maxLength={30} autoFocus submit={save} /></View>
           <Button small primary title="決定" disabled={busy || !renameDraft.trim()} onPress={save} />
           <Button small title="あとで" disabled={busy} onPress={() => setRenaming(null)} />
         </Row>
@@ -466,8 +466,13 @@ export default function Dashboard({ username, logout }: { username: string; logo
         accessibilityHint={draggable && !isDemo ? "長押しして、ほかのタスクに重ねるとグループにでき、グループの見出しに離すとそのグループへ移せます" : undefined}
         onPress={() => startEdit(task)} delayLongPress={300}
         onLongPress={draggable ? event => startDrag(task, event.nativeEvent.pageY) : undefined}
+        onPressIn={draggable && Platform.OS === "web" ? event => {
+          // Webでは押し始めのイベントの種類でマウスかタッチかを見分ける。
+          const type = (event.nativeEvent as unknown as { type?: string }).type;
+          pressing.current = type === "touchstart" ? null : { task, y: event.nativeEvent.pageY };
+        } : undefined}
         // 長押しのあと動かさずに離したら、ドラッグをやめる。
-        onPressOut={() => setTimeout(() => { if (dragging.current && !dragging.current.captured) endDrag(false); }, 50)}
+        onPressOut={() => { pressing.current = null; setTimeout(() => { if (dragging.current && !dragging.current.captured) endDrag(false); }, 50); }}
         style={[s.taskBody, Platform.OS === "web" && draggable && noSelect]}>
         <Text style={[s.taskTitle, task.completed && s.done]}>{task.title}</Text>
         <View style={s.metaRow}>
@@ -519,7 +524,15 @@ export default function Dashboard({ username, logout }: { username: string; logo
     </View>
     {/* 長押しで持ち上げたあとの指の動きは、この View が受け取る */}
     <View ref={scrollBox} style={s.scrollBox}
-      onMoveShouldSetResponderCapture={() => !!dragging.current}
+      onMoveShouldSetResponderCapture={event => {
+        if (dragging.current) return true;
+        // マウスで押したまま少し動かしたら、その場でドラッグを始める。
+        const press = pressing.current;
+        if (!press || Math.abs(event.nativeEvent.pageY - press.y) < 6) return false;
+        pressing.current = null;
+        startDrag(press.task, event.nativeEvent.pageY);
+        return !!dragging.current;
+      }}
       onResponderGrant={() => { if (dragging.current) dragging.current.captured = true; }}
       onResponderMove={event => moveDrag(event.nativeEvent.pageY)}
       onResponderRelease={() => endDrag(true)}
@@ -615,7 +628,6 @@ export default function Dashboard({ username, logout }: { username: string; logo
             <TaskForm key={editingTask?.id ?? "new"} task={editingTask} groups={groups} defaultGroupId={filterGroupId}
               disabled={busy || !connected} run={run} save={value => saveTask(value, editingTask?.id ?? null)}
               cancel={editingTask ? resetForm : undefined} />
-            {!tasks.length && <Hint>まだタスクがありません。上の欄から追加しましょう。</Hint>}
             <Label>グループで絞り込み</Label>
             <GroupChips groups={groups} value={groupFilter} all unclassified={tasks.some(task => task.group_id === null)}
               disabled={busy} set={setGroupFilter} />
@@ -628,11 +640,9 @@ export default function Dashboard({ username, logout }: { username: string; logo
                 </View>
                 {section.tasks.length ? section.tasks.map(task => taskRow(task, true, true)) : <Hint>タスクはありません</Hint>}
               </View>) : open.slice().sort(compare).map(task => taskRow(task, groupFilter === "all"))}
-            {groupFilter === "all" && open.length > 1 && !isDemo && <Hint>タスクを長押しして別のタスクに重ねるとグループにできます（名前はあとで付けられます）。グループの見出しに離すとそのグループへ移せます</Hint>}
             {!!done.length && <Details title={`完了済み（${done.length}件）`}>
               {done.slice().sort(compare).map(task => taskRow(task))}
             </Details>}
-            {!!tasks.length && <Hint>タスク名を押すと編集できます</Hint>}
             <TaskGroupPanel groups={groups} disabled={busy || !connected || isDemo} run={run} changed={refresh} />
           </Card>
           </View>
@@ -646,7 +656,6 @@ export default function Dashboard({ username, logout }: { username: string; logo
         {/* 予定を見ながらタスクも足せるようにする（一覧はホームに出る） */}
         <Card title="タスクを追加" right={<Hint>未完了 {tasks.filter(task => !task.completed).length}件</Hint>}>
           <TaskForm groups={groups} disabled={busy || !connected} run={run} save={value => saveTask(value, null)} />
-          <Hint>追加したタスクはホームの「やること」に表示されます</Hint>
         </Card>
       </View>
 
@@ -666,7 +675,6 @@ export default function Dashboard({ username, logout }: { username: string; logo
           <Text style={ui.section}>🌙 今日の振り返り</Text>
           <Button small title={reflectionDue ? "あとで" : "閉じる"} disabled={busy} onPress={laterReflection} />
         </View>
-        <Hint>おつかれさまでした。3つ答えたら1日の締めくくりです。</Hint>
         <Label>今日やったこと</Label>
         {log.length ? <View style={s.log}>{log.map(item => <Text key={item.id} style={s.logItem}>
           <Text style={ui.hint}>{item.time}　</Text>{item.text}</Text>)}</View>
