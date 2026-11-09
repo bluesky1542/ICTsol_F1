@@ -68,6 +68,8 @@ export default function Dashboard({ username, logout }: { username: string; logo
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [editing, setEditing] = useState<number | null>(null);
+  // 「＋ 追加」で入力欄を開いている間だけ true（普段は一覧を主役にして入力欄を閉じておく）。
+  const [adding, setAdding] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
   // 「⋯」でメニュー（グループを変更・削除）を開いているタスク。
   const [menuFor, setMenuFor] = useState<number | null>(null);
@@ -229,7 +231,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
     const content = scroll.current?.getInnerViewNode();
     if (content) taskCard.current?.measureLayout(content, (_left, top) => scroll.current?.scrollTo({ y: top, animated: true }));
   }
-  function startEdit(task: Task) { setEditing(task.id); scrollToForm(); }
+  function startEdit(task: Task) { setAdding(false); setEditing(task.id); scrollToForm(); }
   function integer(value: string) {
     if (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 1440) throw new Error("時間は1〜1440分で入力してください。");
     return Number(value);
@@ -238,7 +240,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
   async function saveTask(value: TaskPayload, id: number | null) {
     await api<Task>(id === null ? "/tasks" : `/tasks/${id}`, id === null ? "POST" : "PUT", value);
     setTasks(await api<Task[]>("/tasks"));
-    if (id !== null) resetForm();
+    if (id !== null) resetForm(); else setAdding(false);
     invalidate(); setNotice(id === null ? `「${value.title}」を追加しました。` : "保存しました。");
   }
   async function toggleTask(task: Task) {
@@ -479,8 +481,10 @@ export default function Dashboard({ username, logout }: { username: string; logo
         onPress={() => toggleCollapsed(group.id)} style={s.headingToggle}>
         <Label>{hidden ? "▸" : "▾"} {label}</Label>
       </Pressable>
-      {group && !isDemo && <Button small title="名前を変更" label={`${group.name}の名前を変更`} disabled={busy}
-        onPress={() => { setRenaming(group.id); setRenameDraft(group.name); }} />}
+      {group && !isDemo && <Pressable accessibilityRole="button" accessibilityLabel={`${group.name}の名前を変更`} disabled={busy} hitSlop={8}
+        onPress={() => { setRenaming(group.id); setRenameDraft(group.name); }}>
+        <Text style={s.link}>名前を変更</Text>
+      </Pressable>}
     </View>;
   }
 
@@ -519,7 +523,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
           {due && <Text style={[s.due, due[1] === "over" ? s.dueOver : due[1] === "soon" ? s.dueSoon : null]}>{due[0]}</Text>}
           {task.completed && !!task.deadline && <Text style={ui.hint}>締切 {shortDate(task.deadline)}{task.deadline.slice(10).replace("T", " ")}</Text>}
           <Text style={ui.hint}>{meta}</Text>
-          {group && <Text style={ui.hint}>🏷 {group.name}</Text>}
+          {group && <Text style={s.tag}>{group.name}</Text>}
           {task.priority === "high" && <Text style={s.badge}>優先</Text>}
           {task.concentration === "high" && <Text style={s.badge}>集中</Text>}
         </View>
@@ -549,6 +553,114 @@ export default function Dashboard({ username, logout }: { username: string; logo
   }
 
   const hidden = (key: Tab) => tab !== key && s.hidden;
+
+  // ホームの各ブロック。画面の幅によって並べ方を変えるため、先に組み立てておく。
+  const conditionBlock = <>
+          {activity && <FocusCard activity={activity} disabled={busy || isDemo} act={(action, extra) => void run(() => act(action, extra))} />}
+          <Card title="今の調子は？">
+            <Row>{conditions.map(([key, text]) => <Button key={key} title={text} disabled={busy || !connected}
+              selected={conditionFresh && condition?.level === key} onPress={() => void run(async () => {
+                const saved = await api<Condition>("/condition", "PUT", { level: key });
+                setCondition(saved); setNow(Date.now()); invalidate(); setNotice("今の調子を保存しました。");
+              })} />)}</Row>
+            {condition && !conditionFresh && <Hint warn>日付が変わりました。今日の調子を選んでください。</Hint>}
+            <Label>作業の終了時刻</Label>
+            <Row>
+              <TimeField label="作業の終了時刻" value={endDraft} set={setEndDraft} disabled={busy || !connected || isDemo} />
+              <Button small primary title={workEnd ? "変更" : "決定"} disabled={busy || !connected || isDemo || !endDraft || endDraft === workEnd}
+                onPress={() => saveWorkEnd(endDraft)} />
+            </Row>
+            {dueAt !== null && !todayReflection && !reflectionDue && <Hint>{clock(dueAt)}ごろに振り返りを通知します</Hint>}
+          </Card>
+  </>;
+  const aiBlock = <>
+          <Card title="AI提案">
+            <Label>使える時間</Label>
+            <Row>
+              <View style={s.minutesInput}><Input label="使える時間（分）" hideLabel value={available} set={setAvailableAndReset} numeric placeholder="分" disabled={busy} /></View>
+              <Text style={ui.hint}>分</Text>
+            </Row>
+            {calendarLinked && <Row><Button small title={useCalendar ? "✓ 次の予定まで" : "次の予定まで"} selected={useCalendar} disabled={busy}
+              onPress={() => { setUseCalendar(!useCalendar); invalidate(); }} /></Row>}
+
+            <Label>場所</Label>
+            {!!places.length && <Row>{places.map(p => <Button key={p} small title={p} disabled={busy}
+              selected={currentPlace.trim() === p} onPress={() => { setCurrentPlace(currentPlace.trim() === p ? "" : p); invalidate(); }} />)}</Row>}
+            <Input label="場所" hideLabel value={currentPlace} set={v => { setCurrentPlace(v); invalidate(); }} placeholder="例：自宅" disabled={busy} />
+
+            <Button primary title={busy ? "考え中…" : "提案する"} disabled={busy || !!aiBlocked}
+              onPress={() => void run(async () => {
+                invalidate();
+                const result = await api<Suggestions>("/recommendations", "POST", { available_minutes: integer(available), place: currentPlace.trim(), use_calendar: calendarLinked && useCalendar });
+                setSuggestions(result);
+              })} />
+            {!!aiBlocked && <Hint>{aiBlocked}</Hint>}
+            <Details title="送信先：Google Gemini">
+              <Hint>タスク・調子・場所と、最近の振り返り・取り組みの記録を送信します。Googleの製品改善に使われる場合があるため、個人情報は入力しないでください。</Hint>
+            </Details>
+          </Card>
+
+          {suggestions && <Card title={suggestions.source === "ai" ? "提案" : "今できるタスクはありません"}
+            right={<Hint>{suggestions.available_minutes}分</Hint>}>
+            {!!activity && <Hint>新しく選ぶと、今の取り組みは中断になります。</Hint>}
+            {suggestions.choices.map(({ task, reason }, index) => {
+              const active = activity?.kind === "task" && activity.task_id === task.id;
+              return <View key={task.id} style={s.suggestion}>
+                <Text style={s.taskTitle}>{index === 0 ? "おすすめ　" : ""}{task.title}　<Text style={ui.hint}>{task.minutes}分</Text></Text>
+                <Text style={s.body}>{reason}</Text>
+                <Button primary title={active ? "✓ 取り組み中" : `これにする（${Math.min(task.minutes, 240)}分）`} selected={active}
+                  disabled={busy || isDemo || active} onPress={() => void run(() => choose(task.id, index + 1, Math.min(task.minutes, 240)))} />
+              </View>;
+            })}
+            <View style={[s.suggestion, s.rest]}>
+              <Text style={s.taskTitle}>休憩</Text>
+              <Text style={s.body}>{suggestions.rest_reason}</Text>
+              {activity?.kind === "rest" ? <Button title="✓ 休憩中" selected disabled onPress={() => undefined} />
+                : restOpen ? <>
+                  <Label>休憩時間</Label>
+                  <Row>{[5, 10, 15, 30].map(value => <Button key={value} small title={`${value}分`}
+                    selected={value === restDefault} disabled={busy || isDemo} onPress={() => void run(() => choose(null, null, value))} />)}
+                    <Button small title="やめる" disabled={busy} onPress={() => setRestOpen(false)} /></Row>
+                </> : <Button title="休む" disabled={busy || isDemo} onPress={() => setRestOpen(true)} />}
+            </View>
+          </Card>}
+
+          {/* 振り返り：通知を待たずに答えたいとき・答え直したいときの入口（過去の回答は表示しない） */}
+          <Card title="今日の振り返り" right={todayReflection ? <Hint>回答済み ✓</Hint> : workEnd ? <Hint>{workEnd}まで</Hint> : undefined}>
+            {!showReflection && <Row><Button small title={todayReflection ? "答え直す" : "振り返る"} disabled={busy || isDemo}
+              onPress={() => setReflectionOpen(true)} /></Row>}
+          </Card>
+  </>;
+  const taskBlock = <>
+          <View>
+          <Card title={editingTask ? "タスクを編集" : `やること ${open.length}件`}
+            right={!editingTask && !adding ? <Button small primary title="＋ 追加" disabled={busy || !connected} onPress={() => setAdding(true)} /> : undefined}>
+            {(editingTask || adding) && <View style={s.formBox}>
+              <TaskForm key={editingTask?.id ?? "new"} task={editingTask} groups={groups} defaultGroupId={filterGroupId}
+                disabled={busy || !connected} run={run} save={value => saveTask(value, editingTask?.id ?? null)}
+                cancel={editingTask ? resetForm : () => setAdding(false)} />
+            </View>}
+            {!tasks.length && !adding && <Hint>タスクはまだありません</Hint>}
+            <Label>絞り込み</Label>
+            <GroupChips groups={groups} value={groupFilter} all unclassified={tasks.some(task => task.group_id === null)}
+              disabled={busy} set={setGroupFilter} />
+            <TaskDonut tasks={filtered} now={now} />
+            {groupFilter === "all" && groups.length > 0 ? groupSections(open.slice().sort(compare), groups).map(section =>
+              <View key={String(section.id)} style={{ gap: 6 }}>
+                <View ref={dropArea(`group:${section.id}`, { kind: "group", groupId: section.id, name: section.name })}
+                  style={[s.dropHeader, drag?.key === `group:${section.id}` && s.dropHover]}>
+                  {sectionHeading(section)}
+                </View>
+                {section.id !== null && collapsed.includes(section.id) ? null
+                  : section.tasks.length ? section.tasks.map(task => taskRow(task, true, true)) : <Hint>タスクはありません</Hint>}
+              </View>) : open.slice().sort(compare).map(task => taskRow(task, groupFilter === "all"))}
+            {!!done.length && <Details title={`完了済み（${done.length}件）`}>
+              {done.slice().sort(compare).map(task => taskRow(task))}
+            </Details>}
+            <TaskGroupPanel groups={groups} disabled={busy || !connected || isDemo} run={run} changed={refresh} />
+          </Card>
+          </View>
+  </>;
 
   return <SafeAreaProvider><SafeAreaView style={s.root}><StatusBar style="dark" />
     <View style={[s.top, wide && s.wideWidth]}>
@@ -586,112 +698,16 @@ export default function Dashboard({ username, logout }: { username: string; logo
     <ScrollView ref={scroll} contentContainerStyle={[s.content, wide && s.wideWidth]} keyboardShouldPersistTaps="handled"
       scrollEnabled={!drag} scrollEventThrottle={16} onScroll={event => { scrollY.current = event.nativeEvent.contentOffset.y; }}>
 
-      {/* ホーム：調子 → 提案 → やること → 記録 の順に上から操作する */}
+      {/* ホーム：スマホでは 調子 → やること → AI提案・振り返り、広い画面では左に調子と提案、右にやること */}
       <View style={[wide ? s.columns : s.stack, hidden("now")]}>
-        {/* 左（スマホでは上）：調子 → 提案 → 振り返り */}
-        <View style={[s.stack, wide && s.column]}>
-          {activity && <FocusCard activity={activity} disabled={busy || isDemo} act={(action, extra) => void run(() => act(action, extra))} />}
-          <Card title="今の調子は？">
-            <Row>{conditions.map(([key, text]) => <Button key={key} title={text} disabled={busy || !connected}
-              selected={conditionFresh && condition?.level === key} onPress={() => void run(async () => {
-                const saved = await api<Condition>("/condition", "PUT", { level: key });
-                setCondition(saved); setNow(Date.now()); invalidate(); setNotice("今の調子を保存しました。");
-              })} />)}</Row>
-            {condition && !conditionFresh && <Hint warn>日付が変わりました。今日の調子を選んでください。</Hint>}
-            <Label>作業の終了時刻</Label>
-            <Row>
-              <TimeField label="作業の終了時刻" value={endDraft} set={setEndDraft} disabled={busy || !connected || isDemo} />
-              <Button small primary title={workEnd ? "変更" : "決定"} disabled={busy || !connected || isDemo || !endDraft || endDraft === workEnd}
-                onPress={() => saveWorkEnd(endDraft)} />
-            </Row>
-            {dueAt !== null && !todayReflection && !reflectionDue && <Hint>🔔 {clock(dueAt)}ごろに振り返りをお知らせします</Hint>}
-          </Card>
-
-          <Card title="AI提案">
-            <Label>使える時間</Label>
-            <Row>
-              <View style={s.minutesInput}><Input label="使える時間（分）" hideLabel value={available} set={setAvailableAndReset} numeric placeholder="分" disabled={busy} /></View>
-              <Text style={ui.hint}>分</Text>
-            </Row>
-            {calendarLinked && <Row><Button small title={useCalendar ? "✓ 次の予定まで" : "次の予定まで"} selected={useCalendar} disabled={busy}
-              onPress={() => { setUseCalendar(!useCalendar); invalidate(); }} /></Row>}
-
-            <Label>場所</Label>
-            {!!places.length && <Row>{places.map(p => <Button key={p} small title={p} disabled={busy}
-              selected={currentPlace.trim() === p} onPress={() => { setCurrentPlace(currentPlace.trim() === p ? "" : p); invalidate(); }} />)}</Row>}
-            <Input label="場所" hideLabel value={currentPlace} set={v => { setCurrentPlace(v); invalidate(); }} placeholder="例：自宅" disabled={busy} />
-
-            <Button primary title={busy ? "考え中…" : "提案する"} disabled={busy || !!aiBlocked}
-              onPress={() => void run(async () => {
-                invalidate();
-                const result = await api<Suggestions>("/recommendations", "POST", { available_minutes: integer(available), place: currentPlace.trim(), use_calendar: calendarLinked && useCalendar });
-                setSuggestions(result);
-              })} />
-            {!!aiBlocked && <Hint>{aiBlocked}</Hint>}
-            <Details title="送信先：Google Gemini">
-              <Hint>タスク・調子・場所と、最近の振り返り・取り組みの記録を送信します。Googleの製品改善に使われる場合があるため、個人情報は入力しないでください。</Hint>
-            </Details>
-          </Card>
-
-          {suggestions && <Card title={suggestions.source === "ai" ? "提案" : "今できるタスクはありません"}
-            right={<Hint>{suggestions.available_minutes}分</Hint>}>
-            {!!activity && <Hint>新しく選ぶと、今の取り組みは中断になります。</Hint>}
-            {suggestions.choices.map(({ task, reason }, index) => {
-              const active = activity?.kind === "task" && activity.task_id === task.id;
-              return <View key={task.id} style={s.suggestion}>
-                <Text style={s.taskTitle}>{index === 0 ? "おすすめ　" : ""}{task.title}　<Text style={ui.hint}>{task.minutes}分</Text></Text>
-                <Text style={s.body}>{reason}</Text>
-                <Button title={active ? "✓ 取り組み中" : `これにする（${Math.min(task.minutes, 240)}分）`} selected={active}
-                  disabled={busy || isDemo || active} onPress={() => void run(() => choose(task.id, index + 1, Math.min(task.minutes, 240)))} />
-              </View>;
-            })}
-            <View style={[s.suggestion, s.rest]}>
-              <Text style={s.taskTitle}>休憩</Text>
-              <Text style={s.body}>{suggestions.rest_reason}</Text>
-              {activity?.kind === "rest" ? <Button title="✓ 休憩中" selected disabled onPress={() => undefined} />
-                : restOpen ? <>
-                  <Label>休憩時間</Label>
-                  <Row>{[5, 10, 15, 30].map(value => <Button key={value} small title={`${value}分`}
-                    selected={value === restDefault} disabled={busy || isDemo} onPress={() => void run(() => choose(null, null, value))} />)}
-                    <Button small title="やめる" disabled={busy} onPress={() => setRestOpen(false)} /></Row>
-                </> : <Button title="休む" disabled={busy || isDemo} onPress={() => setRestOpen(true)} />}
-            </View>
-          </Card>}
-
-          {/* 振り返り：通知を待たずに答えたいとき・答え直したいときの入口（過去の回答は表示しない） */}
-          <Card title="今日の振り返り" right={todayReflection ? <Hint>回答済み ✓</Hint> : workEnd ? <Hint>{workEnd}まで</Hint> : undefined}>
-            {!showReflection && <Row><Button small title={todayReflection ? "答え直す" : "振り返る"} disabled={busy || isDemo}
-              onPress={() => setReflectionOpen(true)} /></Row>}
-          </Card>
-        </View>
-        {/* 右（スマホでは下）：やること */}
-        <View ref={taskCard} style={[s.stack, wide && s.column]}>
-          {/* やること：追加・編集フォームと一覧を1枚にまとめる */}
-          <View>
-          <Card title={editingTask ? "タスクを編集" : `やること ${open.length}件`}>
-            <TaskForm key={editingTask?.id ?? "new"} task={editingTask} groups={groups} defaultGroupId={filterGroupId}
-              disabled={busy || !connected} run={run} save={value => saveTask(value, editingTask?.id ?? null)}
-              cancel={editingTask ? resetForm : undefined} />
-            <Label>絞り込み</Label>
-            <GroupChips groups={groups} value={groupFilter} all unclassified={tasks.some(task => task.group_id === null)}
-              disabled={busy} set={setGroupFilter} />
-            <TaskDonut tasks={filtered} now={now} />
-            {groupFilter === "all" && groups.length > 0 ? groupSections(open.slice().sort(compare), groups).map(section =>
-              <View key={String(section.id)} style={{ gap: 6 }}>
-                <View ref={dropArea(`group:${section.id}`, { kind: "group", groupId: section.id, name: section.name })}
-                  style={[s.dropHeader, drag?.key === `group:${section.id}` && s.dropHover]}>
-                  {sectionHeading(section)}
-                </View>
-                {section.id !== null && collapsed.includes(section.id) ? null
-                  : section.tasks.length ? section.tasks.map(task => taskRow(task, true, true)) : <Hint>タスクはありません</Hint>}
-              </View>) : open.slice().sort(compare).map(task => taskRow(task, groupFilter === "all"))}
-            {!!done.length && <Details title={`完了済み（${done.length}件）`}>
-              {done.slice().sort(compare).map(task => taskRow(task))}
-            </Details>}
-            <TaskGroupPanel groups={groups} disabled={busy || !connected || isDemo} run={run} changed={refresh} />
-          </Card>
-          </View>
-        </View>
+        {wide ? <>
+          <View style={[s.stack, s.column]}>{conditionBlock}{aiBlock}</View>
+          <View ref={taskCard} style={[s.stack, s.column]}>{taskBlock}</View>
+        </> : <>
+          {conditionBlock}
+          <View ref={taskCard} style={s.stack}>{taskBlock}</View>
+          {aiBlock}
+        </>}
       </View>
 
       {/* 予定：常に読み込んだままにし、連携状態をホームでも使う */}
@@ -717,7 +733,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
         transform: [{ translateX: slide.interpolate({ inputRange: [0, 1], outputRange: [panelWidth + 24, 0] }) }] }]}>
       <ScrollView contentContainerStyle={s.panelContent} keyboardShouldPersistTaps="handled">
         <View style={ui.cardHeading}>
-          <Text style={ui.section}>🌙 今日の振り返り</Text>
+          <Text style={ui.section}>今日の振り返り</Text>
           <Button small title={reflectionDue ? "あとで" : "閉じる"} disabled={busy} onPress={laterReflection} />
         </View>
         <Label>今日やったこと</Label>
@@ -790,14 +806,18 @@ const s = StyleSheet.create({
   dueSoon: { color: "#8a4b00", backgroundColor: "#fdecc8" },
   dueOver: { color: "#9a2920", backgroundColor: "#fde2dd" },
   body: { fontSize: 15, lineHeight: 23, color: colors.text },
-  suggestion: { padding: 14, backgroundColor: colors.soft, borderRadius: 12, gap: 10 },
+  suggestion: { padding: 14, borderWidth: 1, borderColor: colors.border, borderRadius: 12, gap: 10 },
   rest: { backgroundColor: "#f4f1ea" },
   scrollBox: { flex: 1 },
-  picker: { gap: 8, padding: 12, borderRadius: 10, backgroundColor: colors.soft },
+  picker: { gap: 8, padding: 12, borderRadius: 10, borderWidth: 1, borderColor: colors.border, backgroundColor: "white" },
   nameInput: { flex: 1, minWidth: 160 },
   dropHover: { borderColor: colors.primary, borderWidth: 2, backgroundColor: colors.soft, borderRadius: 10 },
   dragging: { opacity: 0.4 },
   dropHeader: { paddingVertical: 4, paddingHorizontal: 4 },
+  link: { fontSize: 12, color: colors.muted, fontWeight: "600", paddingHorizontal: 4 },
+  // 入力欄の中のボタン（薄い面）が背景に溶けないよう、白地に枠線で囲む。
+  formBox: { padding: 14, borderRadius: 12, borderWidth: 1, borderColor: colors.border, backgroundColor: "white" },
+  tag: { fontSize: 12, color: colors.muted, backgroundColor: colors.line, paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4, overflow: "hidden" },
   headingRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   headingToggle: { flex: 1, minHeight: 36, justifyContent: "center" },
   ghost: { position: "absolute", top: 0, left: 16, right: 16, padding: 12, gap: 2, borderRadius: 12, backgroundColor: "white", opacity: 0.95,

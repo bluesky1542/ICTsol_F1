@@ -4,7 +4,7 @@ import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import Dashboard from "./Dashboard";
 import { api, onExpired, setSession } from "./api";
 import { isDemo } from "./demo";
-import { Button, Label } from "./ui";
+import { Button, colors, Label } from "./ui";
 
 export default function Login() {
   const [user, setUser] = useState<{ id: number; username: string } | null>(null);
@@ -52,4 +52,4 @@ export default function Login() {
     </View>
   </ScrollView></SafeAreaView></SafeAreaProvider>;
 }
-const s = StyleSheet.create({ root: { flex: 1, backgroundColor: "#f1f5f4" }, content: { flexGrow: 1, justifyContent: "center", padding: 24 }, card: { width: "100%", maxWidth: 480, alignSelf: "center", backgroundColor: "white", padding: 24, borderRadius: 16, gap: 16 }, heading: { fontSize: 28, fontWeight: "700", color: "#183c32" }, input: { borderWidth: 1, borderColor: "#bdcec7", borderRadius: 8, padding: 12, fontSize: 16 }, error: { color: "#9a2920" } });
+const s = StyleSheet.create({ root: { flex: 1, backgroundColor: colors.background }, content: { flexGrow: 1, justifyContent: "center", padding: 24 }, card: { width: "100%", maxWidth: 420, alignSelf: "center", backgroundColor: "white", padding: 24, borderRadius: 14, gap: 14 }, heading: { fontSize: 24, fontWeight: "700", color: colors.ink }, input: { borderWidth: 1, borderColor: colors.border, borderRadius: 10, padding: 11, fontSize: 16, color: colors.ink }, error: { color: "#9a2920" } });

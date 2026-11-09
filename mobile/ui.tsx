@@ -3,8 +3,9 @@ import { Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-na
 
 // 画面全体で使う色。既存の緑系の配色に合わせる。
 export const colors = {
-  background: "#f1f5f4", ink: "#183c32", text: "#344d43", muted: "#52645e",
-  primary: "#24654c", border: "#b9cec4", soft: "#eef6f1", line: "#e5ece8", taskOpen: "#cfdcd6",
+  // 緑は差し色だけに使い、文字や線は緑みの少ないグレーにして単調さを減らす。
+  background: "#f3f5f4", ink: "#1c2623", text: "#3a4541", muted: "#6b7672",
+  primary: "#24654c", border: "#d5ddd9", soft: "#edf3f0", line: "#e9edeb", taskOpen: "#cfdcd6",
 };
 
 export function Button({ title, onPress, disabled = false, selected = false, primary = false, small = false, label }: {
@@ -73,7 +74,7 @@ export function Details({ title = "詳しく", open, onToggle, children }: {
   const toggle = () => { onToggle ? onToggle(!expanded) : setOwn(!expanded); };
   return <View style={s.details}>
     <Pressable accessibilityRole="button" accessibilityState={{ expanded }} onPress={toggle} style={s.detailsToggle}>
-      <Text style={s.detailsTitle}>{expanded ? "▾" : "ⓘ"} {title}</Text>
+      <Text style={s.detailsTitle}>{expanded ? "▾" : "▸"} {title}</Text>
     </Pressable>
     {expanded && <View style={s.detailsBody}>{children}</View>}
   </View>;
@@ -98,28 +99,29 @@ export function Stars({ value, set, disabled = false }: { value: number | null; 
 }
 
 export const s = StyleSheet.create({
-  card: { backgroundColor: "white", padding: 18, borderRadius: 18, gap: 12 },
+  card: { backgroundColor: "white", padding: 16, borderRadius: 14, gap: 12 },
   cardHeading: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
-  section: { fontSize: 18, fontWeight: "700", color: colors.ink },
+  section: { fontSize: 17, fontWeight: "700", color: colors.ink },
   row: { flexDirection: "row", flexWrap: "wrap", gap: 8, alignItems: "center" },
-  field: { gap: 6 }, label: { fontSize: 14, fontWeight: "600", color: "#314c43" },
-  input: { borderWidth: 1, borderColor: "#bdcec7", borderRadius: 9, padding: 12, fontSize: 16, color: colors.ink, backgroundColor: "#fafcfb" },
-  button: { minHeight: 44, borderWidth: 1, borderColor: colors.border, borderRadius: 10, paddingHorizontal: 14, justifyContent: "center", alignItems: "center", backgroundColor: "white" },
+  field: { gap: 6 }, label: { fontSize: 13, fontWeight: "600", color: colors.muted },
+  input: { borderWidth: 1, borderColor: colors.border, borderRadius: 10, padding: 11, fontSize: 16, color: colors.ink, backgroundColor: "white" },
+  // 普段のボタンは枠線なしの薄い面にして、画面の線を減らす。
+  button: { minHeight: 42, borderRadius: 10, paddingHorizontal: 14, justifyContent: "center", alignItems: "center", backgroundColor: colors.soft },
   small: { paddingHorizontal: 10 },
-  primary: { minHeight: 52, paddingHorizontal: 20 },
-  filled: { backgroundColor: colors.primary, borderColor: colors.primary },
-  buttonText: { fontSize: 14, fontWeight: "600", color: "#234e3d" },
-  primaryText: { fontSize: 16 }, filledText: { color: "white" },
+  primary: { minHeight: 46, paddingHorizontal: 18 },
+  filled: { backgroundColor: colors.primary },
+  buttonText: { fontSize: 14, fontWeight: "600", color: colors.primary },
+  primaryText: { fontSize: 15 }, filledText: { color: "white" },
   disabled: { opacity: 0.45 },
   hint: { color: colors.muted, fontSize: 13, lineHeight: 20 }, warn: { color: "#9a2920" },
   details: { gap: 6 },
   detailsToggle: { minHeight: 32, justifyContent: "center", alignSelf: "flex-start" },
   detailsTitle: { color: colors.primary, fontSize: 13, fontWeight: "600" },
   detailsBody: { gap: 6, padding: 12, borderRadius: 10, backgroundColor: colors.soft },
-  tabs: { flexDirection: "row", backgroundColor: "white", borderRadius: 14, padding: 4, gap: 4 },
-  tab: { flex: 1, minHeight: 44, borderRadius: 10, justifyContent: "center", alignItems: "center" },
-  tabActive: { backgroundColor: colors.primary },
-  tabText: { fontSize: 14, fontWeight: "600", color: "#234e3d" }, tabTextActive: { color: "white" },
+  tabs: { flexDirection: "row", backgroundColor: colors.line, borderRadius: 12, padding: 3, gap: 3 },
+  tab: { flex: 1, minHeight: 38, borderRadius: 9, justifyContent: "center", alignItems: "center" },
+  tabActive: { backgroundColor: "white" },
+  tabText: { fontSize: 14, fontWeight: "600", color: colors.muted }, tabTextActive: { color: colors.ink },
   star: { minWidth: 44, minHeight: 44, justifyContent: "center", alignItems: "center" },
-  starText: { fontSize: 28, color: "#b9cec4" }, starOn: { color: "#e0a526" },
+  starText: { fontSize: 28, color: colors.border }, starOn: { color: "#e0a526" },
 });
