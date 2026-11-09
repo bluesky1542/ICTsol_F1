@@ -69,6 +69,8 @@ export default function Dashboard({ username, logout }: { username: string; logo
   const [notice, setNotice] = useState("");
   const [editing, setEditing] = useState<number | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
+  // 「⋯」でメニュー（グループを変更・削除）を開いているタスク。
+  const [menuFor, setMenuFor] = useState<number | null>(null);
   // 一覧の行で「グループを変更」を開いているタスク。
   const [moving, setMoving] = useState<number | null>(null);
   const [available, setAvailable] = useState("30");
@@ -247,7 +249,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
   }
   async function moveTask(task: Task, target: GroupRef, createdGroupId?: number) {
     await putGroup(task, target.groupId);
-    await reloadTasksAndGroups(); setMoving(null);
+    await reloadTasksAndGroups(); setMoving(null); setMenuFor(null);
     setUndo({ text: createdGroupId === undefined ? `「${task.title}」を「${target.name}」に移しました。`
       : `「${target.name}」を作成し、「${task.title}」を移しました。`, moves: [{ taskId: task.id, group_id: task.group_id }], createdGroupId });
   }
@@ -478,6 +480,13 @@ export default function Dashboard({ username, logout }: { username: string; logo
     const key = `task:${task.id}`;
     return <View key={task.id} ref={draggable ? dropArea(key, { kind: "task", taskId: task.id }) : undefined}
       style={[s.taskRow, drag?.task.id === task.id && s.dragging, drag?.key === key && s.dropHover]}>
+      <View style={s.rowLine}>
+      {/* 左の丸：押すと完了・未完了を切り替える */}
+      <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: task.completed, disabled: busy }}
+        accessibilityLabel={`${task.title}を${task.completed ? "未完了に戻す" : "完了にする"}`} disabled={busy}
+        onPress={() => void run(() => toggleTask(task))} hitSlop={8} style={[s.check, task.completed && s.checkOn]}>
+        {task.completed && <Text style={s.checkMark}>✓</Text>}
+      </Pressable>
       <Pressable accessibilityRole="button" accessibilityLabel={`${task.title}を編集`} disabled={busy}
         accessibilityHint={draggable && !isDemo ? "長押ししてドラッグすると、グループを作成・変更できます" : undefined}
         onPress={() => startEdit(task)} delayLongPress={300}
@@ -489,7 +498,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
         } : undefined}
         // 長押しのあと動かさずに離したら、ドラッグをやめる。
         onPressOut={() => { pressing.current = null; setTimeout(() => { if (dragging.current && !dragging.current.captured) endDrag(false); }, 50); }}
-        style={[s.taskBody, Platform.OS === "web" && draggable && noSelect]}>
+        style={[s.taskBody, { flex: 1 }, Platform.OS === "web" && draggable && noSelect]}>
         <Text style={[s.taskTitle, task.completed && s.done]}>{task.title}</Text>
         <View style={s.metaRow}>
           {due && <Text style={[s.due, due[1] === "over" ? s.dueOver : due[1] === "soon" ? s.dueSoon : null]}>{due[0]}</Text>}
@@ -500,22 +509,27 @@ export default function Dashboard({ username, logout }: { username: string; logo
           {task.concentration === "high" && <Text style={s.badge}>集中</Text>}
         </View>
       </Pressable>
-      <Row>
+      {/* 右の「⋯」：めったに使わない操作をまとめる */}
+      {!isDemo && <Pressable accessibilityRole="button" accessibilityLabel={`${task.title}のメニュー`}
+        accessibilityState={{ expanded: menuFor === task.id }} disabled={busy} hitSlop={6}
+        onPress={() => { const open = menuFor !== task.id; setMenuFor(open ? task.id : null); setMoving(null); setConfirmDelete(null); }}
+        style={[s.more, menuFor === task.id && s.moreOn]}>
+        <Text style={s.moreText}>⋯</Text>
+      </Pressable>}
+      </View>
+      {menuFor === task.id && <Row>
         {confirmDelete === task.id ? <>
-          <Button small title="本当に削除" label={`${task.title}を本当に削除`} disabled={busy || isDemo}
-            onPress={() => void run(() => deleteTask(task))} />
+          <Button small title="本当に削除" label={`${task.title}を本当に削除`} disabled={busy}
+            onPress={() => void run(async () => { await deleteTask(task); setMenuFor(null); })} />
           <Button small title="やめる" disabled={busy} onPress={() => setConfirmDelete(null)} />
         </> : <>
-        <Button small title={task.completed ? "戻す" : "✓ 完了"}
-          label={`${task.title}を${task.completed ? "未完了に戻す" : "完了にする"}`} disabled={busy}
-          onPress={() => void run(() => toggleTask(task))} />
-        <Button small title={moving === task.id ? "▾ グループを変更" : "グループを変更"} label={`${task.title}のグループを変更`} selected={moving === task.id}
-          disabled={busy || isDemo} onPress={() => { setMoving(moving === task.id ? null : task.id); setConfirmDelete(null); setGroupName(""); }} />
-        <Button small title="削除" label={`${task.title}を削除`} disabled={busy || isDemo}
-          onPress={() => { setConfirmDelete(task.id); setMoving(null); }} />
+          {!task.completed && <Button small title="グループを変更" label={`${task.title}のグループを変更`} selected={moving === task.id}
+            disabled={busy} onPress={() => { setMoving(moving === task.id ? null : task.id); setGroupName(""); }} />}
+          <Button small title="削除" label={`${task.title}を削除`} disabled={busy}
+            onPress={() => { setConfirmDelete(task.id); setMoving(null); }} />
         </>}
-      </Row>
-      {moving === task.id && groupPicker(task)}
+      </Row>}
+      {menuFor === task.id && moving === task.id && groupPicker(task)}
     </View>;
   }
 
@@ -746,6 +760,13 @@ const s = StyleSheet.create({
   notice: { padding: 12, backgroundColor: "#deeee4", color: "#234e3d", borderRadius: 10 },
   taskRow: { gap: 6, borderTopWidth: 1, borderColor: colors.line, paddingVertical: 8 },
   taskBody: { minWidth: 0, minHeight: 44, justifyContent: "center", gap: 2, paddingVertical: 6 },
+  rowLine: { flexDirection: "row", alignItems: "center", gap: 10 },
+  check: { width: 26, height: 26, borderRadius: 13, borderWidth: 2, borderColor: colors.primary, alignItems: "center", justifyContent: "center" },
+  checkOn: { backgroundColor: colors.primary },
+  checkMark: { color: "white", fontSize: 14, fontWeight: "700", lineHeight: 16 },
+  more: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
+  moreOn: { backgroundColor: colors.soft },
+  moreText: { fontSize: 20, color: colors.muted, fontWeight: "700", lineHeight: 22 },
   taskTitle: { fontSize: 16, color: "#243e33", fontWeight: "600" }, done: { textDecorationLine: "line-through", color: "#738179" },
   metaRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6 },
   minutesInput: { width: 90 },
