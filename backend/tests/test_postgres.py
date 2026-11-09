@@ -37,6 +37,18 @@ class PostgresTest(TaskGroupCases, TaskDeleteCases, ActivityCases, unittest.Test
         self.token = response.json()["token"]
         self.client.headers["Authorization"] = "Bearer " + self.token
 
+    def test_starter_registration(self):
+        # 本番と同じPostgreSQLで、アプリからの新規登録（例のグループ・タスク入り）が通ること。
+        name = "pg_" + uuid.uuid4().hex[:16]
+        response = self.client.post("/api/auth/register", json={"username": name, "password": "postgres-test-password", "starter": True})
+        self.assertEqual(response.status_code, 201, response.text)
+        headers = {"Authorization": "Bearer " + response.json()["token"]}
+        groups = self.client.get("/api/groups", headers=headers).json()
+        self.assertEqual([group["name"] for group in groups], ["授業", "課題", "生活"])
+        tasks = self.client.get("/api/tasks", headers=headers).json()
+        self.assertEqual(len(tasks), 3)
+        self.assertTrue({task["group_id"] for task in tasks} <= {group["id"] for group in groups})
+
     def test_auth_tasks_history_and_restart(self):
         self.assertEqual(self.client.get("/api/health").status_code, 200)
         self.assertEqual(self.client.post("/api/auth/register", json=self.credentials).status_code, 409)
