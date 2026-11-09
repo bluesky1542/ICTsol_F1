@@ -18,13 +18,16 @@ export function Button({ title, onPress, disabled = false, selected = false, pri
   </Pressable>;
 }
 
-export function Input({ label, value, set, numeric = false, placeholder = "", disabled = false, hideLabel = false, maxLength }: {
+export function Input({ label, value, set, numeric = false, placeholder = "", disabled = false, hideLabel = false, maxLength, autoFocus = false, submit }: {
   label: string; value: string; set: (text: string) => void; numeric?: boolean; placeholder?: string;
   disabled?: boolean; hideLabel?: boolean; maxLength?: number;
+  // 表示したらすぐ入力できるようにする。submit はキーボードの決定（Enter）で呼ぶ。
+  autoFocus?: boolean; submit?: () => void;
 }) {
   return <View style={s.field}>{!hideLabel && <Text style={s.label}>{label}</Text>}<TextInput accessibilityLabel={label}
     style={s.input} value={value} onChangeText={set} editable={!disabled} keyboardType={numeric ? "number-pad" : "default"}
-    placeholder={placeholder} placeholderTextColor="#64748b" maxLength={maxLength ?? (numeric ? 4 : 120)} /></View>;
+    placeholder={placeholder} placeholderTextColor="#64748b" maxLength={maxLength ?? (numeric ? 4 : 120)}
+    autoFocus={autoFocus} onSubmitEditing={submit} /></View>;
 }
 
 // 日付（YYYY-MM-DD）・時刻（HH:MM）の入力欄。Webではブラウザの選択画面を使い、アプリでは文字で入力する。
