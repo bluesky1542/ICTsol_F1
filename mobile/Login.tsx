@@ -27,7 +27,10 @@ export default function Login() {
     if (register && password !== confirm) { setError("確認用パスワードが一致しません。"); return; }
     setBusy(true);
     try {
-      const result = await api<{ token: string; user: { id: number; username: string } }>(`/auth/${register ? "register" : "login"}`, "POST", { username: username.trim(), password });
+      const result = await api<{ token: string; user: { id: number; username: string } }>(`/auth/${register ? "register" : "login"}`, "POST", register
+        // アプリからの新規登録では、最初のグループとタスクを入れて始める。
+        ? { username: username.trim(), password, starter: true }
+        : { username: username.trim(), password });
       setSession(result.token); setPassword(""); setConfirm(""); setUser(result.user);
     } catch (e) { setError(e instanceof Error ? e.message : "ログインできませんでした。"); }
     finally { setBusy(false); }
