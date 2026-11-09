@@ -99,13 +99,18 @@ export default function Dashboard({ username, logout }: { username: string; logo
   const [groupName, setGroupName] = useState("");
   // 一覧でタスクを隠しているグループ（見出しを押して切り替える）。Webでは次に開いたときも同じ状態にする。
   const [collapsed, setCollapsed] = useState<number[]>(() => loadCollapsed(username));
-  function toggleCollapsed(groupId: number) {
+  function updateCollapsed(change: (previous: number[]) => number[]) {
     setCollapsed(previous => {
-      const next = previous.includes(groupId) ? previous.filter(id => id !== groupId) : [...previous, groupId];
-      saveCollapsed(username, next);
+      const next = change(previous);
+      if (next.length !== previous.length || next.some((id, index) => id !== previous[index])) saveCollapsed(username, next);
       return next;
     });
   }
+  function toggleCollapsed(groupId: number) {
+    updateCollapsed(previous => previous.includes(groupId) ? previous.filter(id => id !== groupId) : [...previous, groupId]);
+  }
+  // タスクを移した先のグループが隠れていたら開いて、移したタスクが見えるようにする。
+  const expandGroup = (groupId: number | null) => updateCollapsed(previous => previous.filter(id => id !== groupId));
   // 一覧のグループ見出しで名前を変えているグループ。
   // タスクどうしを重ねて仮の名前で作った直後も、ここで名前を付けてもらう。
   const [renaming, setRenaming] = useState<number | null>(null);
@@ -209,6 +214,8 @@ export default function Dashboard({ username, logout }: { username: string; logo
     ]);
     await loadActivities();
     setGroups(nextGroups);
+    // 消えたグループを「隠している」一覧に残さない。
+    updateCollapsed(previous => previous.filter(id => nextGroups.some(group => group.id === id)));
     setGroupFilter(value => typeof value === "number" && !nextGroups.some(group => group.id === value) ? "all" : value);
     setPlan(nextPlan);
     setNow(Date.now()); setReflections(nextReflections);
@@ -249,15 +256,23 @@ export default function Dashboard({ username, logout }: { username: string; logo
   }
   async function moveTask(task: Task, target: GroupRef, createdGroupId?: number) {
     await putGroup(task, target.groupId);
-    await reloadTasksAndGroups(); setMoving(null); setMenuFor(null);
+    await reloadTasksAndGroups(); setMoving(null); setMenuFor(null); expandGroup(target.groupId);
     setUndo({ text: createdGroupId === undefined ? `「${task.title}」を「${target.name}」に移しました。`
       : `「${target.name}」を作成し、「${task.title}」を移しました。`, moves: [{ taskId: task.id, group_id: task.group_id }], createdGroupId });
   }
   // タスクどうしを重ねたとき。先に仮の名前でグループを作って2つを入れ、そのあと見出しで名前を付けてもらう。
   async function groupTogether(dragged: Task, partner: Task) {
     const created = await api<TaskGroup>("/groups", "POST", { name: draftGroupName(groups) });
-    // 落とされた側（相手）を先に入れて、一覧で相手の位置にグループができるようにする。
-    for (const task of [partner, dragged]) await putGroup(task, created.id);
+    try {
+      // 落とされた側（相手）を先に入れて、一覧で相手の位置にグループができるようにする。
+      for (const task of [partner, dragged]) await putGroup(task, created.id);
+    } catch (error) {
+      // 途中で失敗したら、入れた分を戻して作ったグループを消し、半端な状態を残さない。
+      await Promise.allSettled([partner, dragged].map(task => putGroup(task, task.group_id)));
+      await api(`/groups/${created.id}`, "DELETE").catch(() => undefined);
+      await reloadTasksAndGroups().catch(() => undefined);
+      throw error;
+    }
     await reloadTasksAndGroups(); setMoving(null);
     setRenaming(created.id); setRenameDraft("");
     setUndo({ text: `「${partner.title}」と「${dragged.title}」をグループにしました。`,
