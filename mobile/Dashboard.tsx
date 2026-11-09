@@ -5,7 +5,7 @@ import { StatusBar } from "expo-status-bar";
 import { Achievement, Activity, ActivityAction, api, Condition, ConditionLevel, Reflection, Suggestions, Task, TaskGroup, WorkPlan } from "./api";
 import CalendarPanel from "./CalendarPanel";
 import FocusCard from "./FocusCard";
-import { canDrop, dropLabel, findDropArea, groupByName, type DropArea, type DropTarget } from "./dragDrop";
+import { draftGroupName, dropAction, dropLabel, findDropArea, groupByName, type DropArea, type DropTarget, type GroupRef } from "./dragDrop";
 import { todayLog } from "./activityLog";
 import TaskDonut from "./TaskDonut";
 import TaskForm, { type TaskPayload } from "./TaskForm";
@@ -87,11 +87,16 @@ export default function Dashboard({ username, logout }: { username: string; logo
   const scrollY = useRef(0);
   const scrollBox = useRef<View>(null);
   const tasksRef = useRef<Task[]>([]);
-  // 移動の直後だけ出す「元に戻す」。
+  const groupsRef = useRef<TaskGroup[]>([]);
+  // 移動の直後だけ出す「元に戻す」。moves は移したタスクと元のグループ。
   // createdGroupId は、名前を入れて新しく作ったグループ（元に戻すときに空なら消す）。
-  const [undo, setUndo] = useState<{ text: string; taskId: number; group_id: number | null; createdGroupId?: number } | null>(null);
+  const [undo, setUndo] = useState<{ text: string; moves: { taskId: number; group_id: number | null }[]; createdGroupId?: number } | null>(null);
   // 「グループを変更」で入力中のグループ名。
   const [groupName, setGroupName] = useState("");
+  // 一覧のグループ見出しで名前を変えているグループ。
+  // タスクどうしを重ねて仮の名前で作った直後も、ここで名前を付けてもらう。
+  const [renaming, setRenaming] = useState<number | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
   const [calendarLinked, setCalendarLinked] = useState(false);
   const [calendarReload, setCalendarReload] = useState(0);
   const [useCalendar, setUseCalendar] = useState(true);
@@ -141,6 +146,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
       () => { setNow(Date.now()); changeTab("now"); });
   }, [dueAt, !!todayReflection]);
   tasksRef.current = tasks;
+  groupsRef.current = groups;
   // ドラッグ中に画面の上端・下端へ寄せたら自動でスクロールする。
   useEffect(() => {
     if (!drag) return;
@@ -224,17 +230,44 @@ export default function Dashboard({ username, logout }: { username: string; logo
     await api<Task>(`/tasks/${task.id}`, "PUT", { title: task.title, minutes: task.minutes, deadline: task.deadline, priority: task.priority,
       concentration: task.concentration, place: task.place, group_id: groupId });
   }
-  async function moveTask(task: Task, target: DropTarget, createdGroupId?: number) {
-    await putGroup(task, target.groupId);
+  async function reloadTasksAndGroups() {
     const [nextTasks, nextGroups] = await Promise.all([api<Task[]>("/tasks"), api<TaskGroup[]>("/groups")]);
-    setTasks(nextTasks); setGroups(nextGroups); invalidate(); setMoving(null);
+    setTasks(nextTasks); setGroups(nextGroups); invalidate();
+  }
+  async function moveTask(task: Task, target: GroupRef, createdGroupId?: number) {
+    await putGroup(task, target.groupId);
+    await reloadTasksAndGroups(); setMoving(null);
     setUndo({ text: createdGroupId === undefined ? `「${task.title}」を「${target.name}」に移しました。`
-      : `グループ「${target.name}」を作って「${task.title}」を入れました。`, taskId: task.id, group_id: task.group_id, createdGroupId });
+      : `グループ「${target.name}」を作って「${task.title}」を入れました。`, moves: [{ taskId: task.id, group_id: task.group_id }], createdGroupId });
+  }
+  // タスクどうしを重ねたとき。先に仮の名前でグループを作って2つを入れ、そのあと見出しで名前を付けてもらう。
+  async function groupTogether(dragged: Task, partner: Task) {
+    const created = await api<TaskGroup>("/groups", "POST", { name: draftGroupName(groups) });
+    // 落とされた側（相手）を先に入れて、一覧で相手の位置にグループができるようにする。
+    for (const task of [partner, dragged]) await putGroup(task, created.id);
+    await reloadTasksAndGroups(); setMoving(null);
+    setRenaming(created.id); setRenameDraft("");
+    setUndo({ text: `「${partner.title}」と「${dragged.title}」をグループにしました。名前を付けてください。`,
+      moves: [partner, dragged].map(task => ({ taskId: task.id, group_id: task.group_id })), createdGroupId: created.id });
+  }
+  // 一覧の見出しからグループの名前を変える。
+  async function renameGroup(group: TaskGroup, text: string) {
+    const name = text.trim();
+    if (!name) throw new Error("グループ名を入力してください。");
+    if (name !== group.name) {
+      if (groupByName(groups, name)) throw new Error(`「${name}」というグループはもうあります。別の名前にしてください。`);
+      await api(`/groups/${group.id}`, "PUT", { name });
+      setGroups(await api<TaskGroup[]>("/groups"));
+    }
+    setRenaming(null); setNotice(`グループの名前を「${name}」にしました。`);
   }
   async function undoMove(saved: NonNullable<typeof undo>) {
-    const task = tasks.find(value => value.id === saved.taskId);
-    if (!task) throw new Error("移したタスクが見つかりません。");
-    await putGroup(task, saved.group_id);
+    for (const move of saved.moves) {
+      const task = tasks.find(value => value.id === move.taskId);
+      if (!task) throw new Error("移したタスクが見つかりません。");
+      await putGroup(task, move.group_id);
+    }
+    if (renaming === saved.createdGroupId) setRenaming(null);
     const nextTasks = await api<Task[]>("/tasks");
     // 名前を入れて作ったグループが空になったら、一緒に消して元どおりにする。
     if (saved.createdGroupId !== undefined && !nextTasks.some(value => value.group_id === saved.createdGroupId)) {
@@ -285,11 +318,12 @@ export default function Dashboard({ username, logout }: { username: string; logo
     if (!state) return null;
     const shift = scrollY.current - state.scrollAt;
     const area = findDropArea(state.areas.map(value => ({ ...value, top: value.top - shift })), state.y);
-    return area && canDrop(tasksRef.current, state.taskId, area.target) ? area : null;
+    const action = area && dropAction(tasksRef.current, groupsRef.current, state.taskId, area.target);
+    return area && action ? { key: area.key, action } : null;
   }
   function showHover() {
     const hover = hoverDrop();
-    setDrag(value => value && { ...value, key: hover?.key ?? null, label: hover ? dropLabel(hover.target) : null });
+    setDrag(value => value && { ...value, key: hover?.key ?? null, label: hover ? dropLabel(hover.action) : null });
   }
   function moveDrag(pageY: number) {
     const state = dragging.current;
@@ -302,7 +336,9 @@ export default function Dashboard({ username, logout }: { username: string; logo
     const hover = drop ? hoverDrop() : null;
     const task = tasksRef.current.find(value => value.id === dragging.current?.taskId);
     dragging.current = null; setDrag(null);
-    if (hover && task) void run(() => moveTask(task, hover.target));
+    if (!hover || !task) return;
+    const { action } = hover;
+    void run(() => action.kind === "move" ? moveTask(task, action) : groupTogether(task, action.partner));
   }
   async function deleteTask(task: Task) {
     await api(`/tasks/${task.id}`, "DELETE");
@@ -375,7 +411,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
     const name = groupName.trim(), found = name ? groupByName(groups, name) : null;
     // 入力中の文字を含む既存のグループ名を候補に出す。
     const similar = name ? groups.filter(group => group.name.includes(name) && group.name !== name).slice(0, 5) : [];
-    const choices: DropTarget[] = [...groups.map(group => ({ groupId: group.id, name: group.name })), { groupId: null, name: "未分類" }];
+    const choices: GroupRef[] = [...groups.map(group => ({ groupId: group.id, name: group.name })), { groupId: null, name: "未分類" }];
     return <View style={s.picker}>
       <Hint>「{task.title}」を入れるグループの名前を入れてください。ない名前なら新しく作ります。</Hint>
       <Row>
@@ -393,15 +429,41 @@ export default function Dashboard({ username, logout }: { username: string; logo
     </View>;
   }
 
+  // 一覧のグループ見出し。グループなら「名前を変更」で、その場で名前を付け直せる。
+  function sectionHeading(section: { id: number | null; name: string; tasks: Task[] }) {
+    const group = section.id === null ? null : groups.find(value => value.id === section.id) ?? null;
+    if (group && renaming === group.id) {
+      const save = () => void run(() => renameGroup(group, renameDraft));
+      return <View style={s.picker}>
+        <Hint>グループの名前を入れてください（いまは「{group.name}」）</Hint>
+        <Row>
+          <View style={s.nameInput}><Input label={`${group.name}の新しい名前`} hideLabel value={renameDraft} set={setRenameDraft}
+            placeholder="例：レポート課題" disabled={busy} maxLength={30} autoFocus submit={save} /></View>
+          <Button small primary title="決定" disabled={busy || !renameDraft.trim()} onPress={save} />
+          <Button small title="あとで" disabled={busy} onPress={() => setRenaming(null)} />
+        </Row>
+      </View>;
+    }
+    return <View style={s.headingRow}>
+      <View style={{ flex: 1 }}><Label>{section.name}・未完了 {section.tasks.length}件</Label></View>
+      {group && !isDemo && <Button small title="名前を変更" label={`${group.name}の名前を変更`} disabled={busy}
+        onPress={() => { setRenaming(group.id); setRenameDraft(group.name); }} />}
+    </View>;
+  }
+
   // 描画のたびに部品を作り直さないよう、関数として呼び出す。
-  function taskRow(task: Task, draggable = false) {
+  // draggable なら長押しで持ち上げられ、ほかのタスクを重ねる落とし先にもなる。
+  // inSection はグループ見出しの下に並べるとき（行にグループ名を出さない）。
+  function taskRow(task: Task, draggable = false, inSection = false) {
     const meta = [`${task.minutes}分`, task.place].filter(Boolean).join(" · ");
     const due = task.deadline && !task.completed ? deadlineLabel(task.deadline, now) : null;
     // 絞り込みなしでグループ見出しがないときは、どのグループかを行に出す。
-    const group = !draggable && groupFilter === "all" ? groups.find(value => value.id === task.group_id) : null;
-    return <View key={task.id} style={[s.taskRow, drag?.task.id === task.id && s.dragging]}>
+    const group = !inSection && groupFilter === "all" ? groups.find(value => value.id === task.group_id) : null;
+    const key = `task:${task.id}`;
+    return <View key={task.id} ref={draggable ? dropArea(key, { kind: "task", taskId: task.id }) : undefined}
+      style={[s.taskRow, drag?.task.id === task.id && s.dragging, drag?.key === key && s.dropHover]}>
       <Pressable accessibilityRole="button" accessibilityLabel={`${task.title}を編集`} disabled={busy}
-        accessibilityHint={draggable && !isDemo ? "長押ししてグループの見出しに離すと、グループを変更できます" : undefined}
+        accessibilityHint={draggable && !isDemo ? "長押しして、ほかのタスクに重ねるとグループにでき、グループの見出しに離すとそのグループへ移せます" : undefined}
         onPress={() => startEdit(task)} delayLongPress={300}
         onLongPress={draggable ? event => startDrag(task, event.nativeEvent.pageY) : undefined}
         // 長押しのあと動かさずに離したら、ドラッグをやめる。
@@ -560,13 +622,13 @@ export default function Dashboard({ username, logout }: { username: string; logo
             <TaskDonut tasks={filtered} now={now} />
             {groupFilter === "all" && groups.length > 0 ? groupSections(open.slice().sort(compare), groups).map(section =>
               <View key={String(section.id)} style={{ gap: 6 }}>
-                <View ref={dropArea(`group:${section.id}`, { groupId: section.id, name: section.name })}
+                <View ref={dropArea(`group:${section.id}`, { kind: "group", groupId: section.id, name: section.name })}
                   style={[s.dropHeader, drag?.key === `group:${section.id}` && s.dropHover]}>
-                  <Label>{section.name}・未完了 {section.tasks.length}件</Label>
+                  {sectionHeading(section)}
                 </View>
-                {section.tasks.length ? section.tasks.map(task => taskRow(task, true)) : <Hint>タスクはありません</Hint>}
-              </View>) : open.slice().sort(compare).map(task => taskRow(task))}
-            {groupFilter === "all" && groups.length > 0 && open.length > 0 && !isDemo && <Hint>「グループを変更」か、長押ししてグループの見出しに離すと、グループを移せます</Hint>}
+                {section.tasks.length ? section.tasks.map(task => taskRow(task, true, true)) : <Hint>タスクはありません</Hint>}
+              </View>) : open.slice().sort(compare).map(task => taskRow(task, groupFilter === "all"))}
+            {groupFilter === "all" && open.length > 1 && !isDemo && <Hint>タスクを長押しして別のタスクに重ねるとグループにできます（名前はあとで付けられます）。グループの見出しに離すとそのグループへ移せます</Hint>}
             {!!done.length && <Details title={`完了済み（${done.length}件）`}>
               {done.slice().sort(compare).map(task => taskRow(task))}
             </Details>}
@@ -663,6 +725,7 @@ const s = StyleSheet.create({
   dropHover: { borderColor: colors.primary, borderWidth: 2, backgroundColor: colors.soft, borderRadius: 10 },
   dragging: { opacity: 0.4 },
   dropHeader: { paddingVertical: 4, paddingHorizontal: 4 },
+  headingRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   ghost: { position: "absolute", top: 0, left: 16, right: 16, padding: 12, gap: 2, borderRadius: 12, backgroundColor: "white", opacity: 0.95,
     borderWidth: 2, borderColor: colors.primary, shadowColor: "#000", shadowOpacity: 0.2, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 10 },
   ghostLabel: { fontSize: 13, fontWeight: "700", color: colors.primary },
