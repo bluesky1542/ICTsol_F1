@@ -484,7 +484,7 @@ export default function Dashboard({ username, logout }: { username: string; logo
       {/* 左の丸：押すと完了・未完了を切り替える */}
       <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: task.completed, disabled: busy }}
         accessibilityLabel={`${task.title}を${task.completed ? "未完了に戻す" : "完了にする"}`} disabled={busy}
-        onPress={() => void run(() => toggleTask(task))} hitSlop={8} style={[s.check, task.completed && s.checkOn]}>
+        onPress={() => void run(() => toggleTask(task))} hitSlop={12} style={[s.check, task.completed && s.checkOn]}>
         {task.completed && <Text style={s.checkMark}>✓</Text>}
       </Pressable>
       <Pressable accessibilityRole="button" accessibilityLabel={`${task.title}を編集`} disabled={busy}
@@ -761,9 +761,9 @@ const s = StyleSheet.create({
   taskRow: { gap: 6, borderTopWidth: 1, borderColor: colors.line, paddingVertical: 8 },
   taskBody: { minWidth: 0, minHeight: 44, justifyContent: "center", gap: 2, paddingVertical: 6 },
   rowLine: { flexDirection: "row", alignItems: "center", gap: 10 },
-  check: { width: 26, height: 26, borderRadius: 13, borderWidth: 2, borderColor: colors.primary, alignItems: "center", justifyContent: "center" },
+  check: { width: 20, height: 20, borderRadius: 10, borderWidth: 1.5, borderColor: colors.primary, alignItems: "center", justifyContent: "center" },
   checkOn: { backgroundColor: colors.primary },
-  checkMark: { color: "white", fontSize: 14, fontWeight: "700", lineHeight: 16 },
+  checkMark: { color: "white", fontSize: 11, fontWeight: "700", lineHeight: 13 },
   more: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
   moreOn: { backgroundColor: colors.soft },
   moreText: { fontSize: 20, color: colors.muted, fontWeight: "700", lineHeight: 22 },
