@@ -95,6 +95,15 @@ export default function Dashboard({ username, logout }: { username: string; logo
   const [undo, setUndo] = useState<{ text: string; moves: { taskId: number; group_id: number | null }[]; createdGroupId?: number } | null>(null);
   // 「グループを変更」で入力中のグループ名。
   const [groupName, setGroupName] = useState("");
+  // 一覧でタスクを隠しているグループ（見出しを押して切り替える）。Webでは次に開いたときも同じ状態にする。
+  const [collapsed, setCollapsed] = useState<number[]>(() => loadCollapsed(username));
+  function toggleCollapsed(groupId: number) {
+    setCollapsed(previous => {
+      const next = previous.includes(groupId) ? previous.filter(id => id !== groupId) : [...previous, groupId];
+      saveCollapsed(username, next);
+      return next;
+    });
+  }
   // 一覧のグループ見出しで名前を変えているグループ。
   // タスクどうしを重ねて仮の名前で作った直後も、ここで名前を付けてもらう。
   const [renaming, setRenaming] = useState<number | null>(null);
@@ -444,8 +453,16 @@ export default function Dashboard({ username, logout }: { username: string; logo
         </Row>
       </View>;
     }
+    const label = `${section.name}・未完了 ${section.tasks.length}件`;
+    if (!group) return <View style={s.headingRow}><View style={{ flex: 1 }}><Label>{label}</Label></View></View>;
+    const hidden = collapsed.includes(group.id);
     return <View style={s.headingRow}>
-      <View style={{ flex: 1 }}><Label>{section.name}・未完了 {section.tasks.length}件</Label></View>
+      {/* 見出しを押すと、このグループのタスクを隠す・表示する */}
+      <Pressable accessibilityRole="button" accessibilityState={{ expanded: !hidden }}
+        accessibilityLabel={`${group.name}のタスクを${hidden ? "表示" : "隠す"}`}
+        onPress={() => toggleCollapsed(group.id)} style={s.headingToggle}>
+        <Label>{hidden ? "▸" : "▾"} {label}</Label>
+      </Pressable>
       {group && !isDemo && <Button small title="名前を変更" label={`${group.name}の名前を変更`} disabled={busy}
         onPress={() => { setRenaming(group.id); setRenameDraft(group.name); }} />}
     </View>;
@@ -638,7 +655,8 @@ export default function Dashboard({ username, logout }: { username: string; logo
                   style={[s.dropHeader, drag?.key === `group:${section.id}` && s.dropHover]}>
                   {sectionHeading(section)}
                 </View>
-                {section.tasks.length ? section.tasks.map(task => taskRow(task, true, true)) : <Hint>タスクはありません</Hint>}
+                {section.id !== null && collapsed.includes(section.id) ? null
+                  : section.tasks.length ? section.tasks.map(task => taskRow(task, true, true)) : <Hint>タスクはありません</Hint>}
               </View>) : open.slice().sort(compare).map(task => taskRow(task, groupFilter === "all"))}
             {!!done.length && <Details title={`完了済み（${done.length}件）`}>
               {done.slice().sort(compare).map(task => taskRow(task))}
@@ -697,6 +715,19 @@ export default function Dashboard({ username, logout }: { username: string; logo
   </SafeAreaView></SafeAreaProvider>;
 }
 
+// 隠しているグループの保存先（Webのみ。アプリでは開き直すとすべて表示に戻る）。
+const collapsedKey = (username: string) => `ictsol-collapsed-groups:${username}`;
+function loadCollapsed(username: string): number[] {
+  try {
+    const saved = Platform.OS === "web" ? globalThis.localStorage?.getItem(collapsedKey(username)) : null;
+    const value: unknown = saved ? JSON.parse(saved) : [];
+    return Array.isArray(value) ? value.filter((id): id is number => typeof id === "number") : [];
+  } catch { return []; }
+}
+function saveCollapsed(username: string, ids: number[]) {
+  try { if (Platform.OS === "web") globalThis.localStorage?.setItem(collapsedKey(username), JSON.stringify(ids)); } catch { /* 保存できなくても表示は切り替える */ }
+}
+
 // Web で長押し中に文字が選択されないようにする（ネイティブの型には無い指定のため別に持つ）。
 const noSelect = { userSelect: "none" } as unknown as ViewStyle;
 
@@ -734,6 +765,7 @@ const s = StyleSheet.create({
   dragging: { opacity: 0.4 },
   dropHeader: { paddingVertical: 4, paddingHorizontal: 4 },
   headingRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  headingToggle: { flex: 1, minHeight: 36, justifyContent: "center" },
   ghost: { position: "absolute", top: 0, left: 16, right: 16, padding: 12, gap: 2, borderRadius: 12, backgroundColor: "white", opacity: 0.95,
     borderWidth: 2, borderColor: colors.primary, shadowColor: "#000", shadowOpacity: 0.2, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 10 },
   ghostLabel: { fontSize: 13, fontWeight: "700", color: colors.primary },
