@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import secrets
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -84,14 +85,43 @@ def issue(user, response):
     return {"token": token, "user": user, "expires_in": 86400}
 
 
+class Registration(Credentials):
+    # アプリから登録したときだけ true にし、最初のグループとタスクを入れる（APIを直接使う場合は空のまま）。
+    starter: bool = False
+
+
+# 新規登録した直後に入れておくグループとタスク。大学生の使い始めを想定する。
+STARTER_GROUPS = ("授業", "課題", "生活")
+STARTER_TASKS = (
+    # (グループ, 題名, 分, 締切までの日数, 優先度, 集中度, 場所)
+    ("授業", "次の授業の予習をする", 30, None, "medium", "medium", ""),
+    ("課題", "レポートのテーマを決める", 20, 3, "high", "high", ""),
+    ("生活", "部屋を片づける", 15, None, "low", "low", "自宅"),
+)
+
+
+def add_starter_data(db, user_id):
+    now = datetime.now(timezone.utc)
+    japan_today = (now + timedelta(hours=9)).date()
+    groups = {name: db.execute(
+        "INSERT INTO task_groups (user_id,name,created_at) VALUES (?,?,?) RETURNING id", (user_id, name, now.isoformat()),
+    ).fetchone()["id"] for name in STARTER_GROUPS}
+    for group, title, minutes, days, priority, concentration, place in STARTER_TASKS:
+        deadline = (japan_today + timedelta(days=days)).isoformat() if days is not None else None
+        db.execute("INSERT INTO tasks (title,minutes,deadline,priority,concentration,place,group_id,user_id) VALUES (?,?,?,?,?,?,?,?)",
+                   (title, minutes, deadline, priority, concentration, place, groups[group], user_id))
+
+
 @router.post("/register", status_code=201)
-def register(data: Credentials, request: Request, response: Response):
+def register(data: Registration, request: Request, response: Response):
     throttle(request, data.username, "register")
     hashed = password_hash(data.password)
     try:
         with database() as db:
             row = db.execute("INSERT INTO users (username,password_hash) VALUES (?,?) RETURNING id", (data.username, hashed)).fetchone()
             user = {"id": row["id"], "username": data.username}
+            if data.starter:
+                add_starter_data(db, row["id"])
     except IntegrityErrors:
         raise HTTPException(409, "そのユーザー名は使用できません。") from None
     return issue(user, response)

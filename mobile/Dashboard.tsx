@@ -645,7 +645,9 @@ export default function Dashboard({ username, logout }: { username: string; logo
             <GroupChips groups={groups} value={groupFilter} all unclassified={tasks.some(task => task.group_id === null)}
               disabled={busy} set={setGroupFilter} />
             <TaskDonut tasks={filtered} now={now} />
-            {groupFilter === "all" && groups.length > 0 ? groupSections(open.slice().sort(compare), groups).map(section =>
+            {groupFilter === "all" && groups.length > 0 ? groupSections(open.slice().sort(compare), groups)
+              // 空の「未分類」は出さない（ドラッグ中だけ、未分類へ戻す落とし先として出す）。
+              .filter(section => section.id !== null || section.tasks.length > 0 || !!drag).map(section =>
               <View key={String(section.id)} style={{ gap: 6 }}>
                 <View ref={dropArea(`group:${section.id}`, { kind: "group", groupId: section.id, name: section.name })}
                   style={[s.dropHeader, drag?.key === `group:${section.id}` && s.dropHover]}>
