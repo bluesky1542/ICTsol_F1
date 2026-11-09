@@ -23,10 +23,6 @@ export type Reflection = {
   tiredness: ConditionLevel; comment: string; updated_at: string;
 };
 export type WorkPlan = { day: string; end_time: string };
-export type ReflectionSummary = {
-  from: string; to: string; answered_days: number;
-  achievement: Record<Achievement, number>; average_satisfaction: number | null;
-};
 export type Suggestions = {
   available_minutes: number;
   source: "ai" | "no_candidates";

@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from app.database import database
 from app.main import app
+from helpers import current_user_id
 
 
 class ActivityCases:
@@ -114,7 +115,7 @@ class ActivityCases:
     def test_activity_legacy_rows_are_listed(self):
         task = self.activity_task()
         self.assertEqual(self.client.put("/api/condition", json={"level": "normal"}).status_code, 200)
-        user_id = self.client.get("/api/auth/me").json()["id"]
+        user_id = current_user_id(self.client)
         with database() as db:
             db.execute("INSERT INTO activities (user_id,task_id,task_title,condition_level,created_at) VALUES (?,?,?,?,?)",
                        (user_id, task["id"], "旧形式", "normal", datetime.now(timezone.utc).isoformat()))

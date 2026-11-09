@@ -37,13 +37,6 @@ export function demoResponse(path: string, method: string): unknown {
     case "/activities/current": return null;
     case "/reflections": return [];
     case "/reflections/plan": return { day: new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10), end_time: "18:00" };
-    case "/reflections/summary": {
-      const end = new Date(Date.now() + 9 * 3600000);
-      const start = new Date(end);
-      start.setUTCDate(start.getUTCDate() - 6);
-      return { from: start.toISOString().slice(0, 10), to: end.toISOString().slice(0, 10), answered_days: 0,
-        achievement: { done: 0, partial: 0, not_done: 0 }, average_satisfaction: null };
-    }
     case "/condition": return { level: "normal", updated_at: new Date().toISOString(), expires_at: new Date(Date.now() + 86400000).toISOString() };
     case "/config": return { ai_configured: false };
     case "/calendar": {

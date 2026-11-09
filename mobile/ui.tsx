@@ -66,12 +66,9 @@ export function Row({ children }: { children: ReactNode }) {
 }
 
 // 補足説明は普段は閉じておき、必要なときだけ開いて読めるようにする。
-export function Details({ title = "詳しく", open, onToggle, children }: {
-  title?: string; open?: boolean; onToggle?: (open: boolean) => void; children: ReactNode;
-}) {
-  const [own, setOwn] = useState(false);
-  const expanded = open ?? own;
-  const toggle = () => { onToggle ? onToggle(!expanded) : setOwn(!expanded); };
+export function Details({ title, children }: { title: string; children: ReactNode }) {
+  const [expanded, setExpanded] = useState(false);
+  const toggle = () => setExpanded(!expanded);
   return <View style={s.details}>
     <Pressable accessibilityRole="button" accessibilityState={{ expanded }} onPress={toggle} style={s.detailsToggle}>
       <Text style={s.detailsTitle}>{expanded ? "▾" : "▸"} {title}</Text>
@@ -117,7 +114,8 @@ export const s = StyleSheet.create({
   details: { gap: 6 },
   detailsToggle: { minHeight: 32, justifyContent: "center", alignSelf: "flex-start" },
   detailsTitle: { color: colors.primary, fontSize: 13, fontWeight: "600" },
-  detailsBody: { gap: 6, padding: 12, borderRadius: 10, backgroundColor: colors.soft },
+  // 中にボタン（薄い面）が入ることがあるので、白地に枠線で囲む。
+  detailsBody: { gap: 8, padding: 12, borderRadius: 10, borderWidth: 1, borderColor: colors.border, backgroundColor: "white" },
   tabs: { flexDirection: "row", backgroundColor: colors.line, borderRadius: 12, padding: 3, gap: 3 },
   tab: { flex: 1, minHeight: 38, borderRadius: 9, justifyContent: "center", alignItems: "center" },
   tabActive: { backgroundColor: "white" },

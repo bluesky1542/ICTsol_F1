@@ -58,11 +58,6 @@ def health_check() -> dict[str, str]:
     return {"status": "ok", "message": "バックエンドは正常に動作しています"}
 
 
-@app.get("/api/hello")
-def hello() -> dict[str, str]:
-    return {"message": "スマホアプリからの接続に成功しました"}
-
-
 @app.get("/api/config")
 def config(user: User):
     key = os.getenv("GEMINI_API_KEY", "").strip()

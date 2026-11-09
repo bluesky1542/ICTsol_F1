@@ -10,8 +10,9 @@ from unittest.mock import patch
 import httpx
 from fastapi.testclient import TestClient
 
-from app.database import database, initialize, lock_tasks
+from app.database import database, initialize
 from app.main import app
+from helpers import current_user_id
 
 
 class TaskGroupCases:
@@ -63,7 +64,7 @@ class TaskGroupCases:
 
     def test_groups_private_and_invalid_task_group(self):
         other = self.enterContext(TestClient(app))
-        user_id = self.client.get("/api/auth/me").json()["id"]
+        user_id = current_user_id(self.client)
         session = other.post("/api/auth/register", json={
             "username": f"group_other_{user_id}", "password": "test-password-123",
         }).json()
@@ -121,7 +122,7 @@ class TaskGroupCases:
 
     def test_tree_is_migrated_to_groups(self):
         # 親子（ツリー）の時代のデータ：見出し「レポート」の下に子と、さらに中見出しの下に孫。
-        user_id = self.client.get("/api/auth/me").json()["id"]
+        user_id = current_user_id(self.client)
         existing = self.group("授業")
         with database() as db:
             add = lambda title, parent, completed=0, group=None: db.execute(
