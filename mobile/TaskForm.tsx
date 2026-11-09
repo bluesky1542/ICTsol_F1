@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import type { Level, Task, TaskGroup } from "./api";
 import { GroupChips } from "./TaskGroupPanel";
-import { Button, Hint, Input, Label, Row, TimeField, s as ui } from "./ui";
+import { Button, Input, Label, Row, TimeField, s as ui } from "./ui";
 
 // サーバーへ送るタスクの中身（追加・編集で共通）。
 export type TaskPayload = {
@@ -52,7 +52,7 @@ export default function TaskForm({ task, groups, defaultGroupId = null, initialD
   return <View style={s.form}>
     {/* 「未分類」ボタンは置かない。何も選ばなければ未分類で、選んだグループをもう一度押すと外せる */}
     {!!groups.length && <>
-      <Label>グループ（選ばなければ未分類）</Label>
+      <Label>グループ</Label>
       <GroupChips groups={groups} value={groupId} disabled={disabled} unclassified={false}
         set={value => setGroupId(value === "all" || value === groupId ? null : value)} />
     </>}
@@ -81,7 +81,6 @@ export default function TaskForm({ task, groups, defaultGroupId = null, initialD
       })} />
       {cancel && <Button title="やめる" disabled={disabled} onPress={cancel} />}
     </Row>
-    {!task && !groups.length && <Hint>グループは、一覧でタスクを長押しして別のタスクに重ねるか、「グループを変更」「グループを管理」で作れます</Hint>}
   </View>;
 }
 

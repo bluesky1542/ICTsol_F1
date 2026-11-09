@@ -2,7 +2,7 @@ import { useState } from "react";
 import { View } from "react-native";
 import { api, TaskGroup } from "./api";
 import type { GroupFilter } from "./taskGroups";
-import { Button, Details, Hint, Input, Row } from "./ui";
+import { Button, Details, Input, Row } from "./ui";
 
 export function GroupChips({ groups, value, set, disabled, all = false, unclassified = true }: {
   groups: TaskGroup[]; value: GroupFilter; set: (value: GroupFilter) => void; disabled: boolean;
@@ -34,7 +34,6 @@ export default function TaskGroupPanel({ groups, disabled, run, changed }: {
   return <Details title="グループを管理">
     <Input label="新しいグループ名" value={name} set={setName} disabled={disabled} maxLength={30} />
     <Row><Button small title="作成" disabled={disabled || groups.length >= 30} onPress={() => void run(() => save(null, name))} /></Row>
-    <Hint>グループは30個まで。削除すると所属タスクは未分類になります。タスク自体は消えません。</Hint>
     {groups.map(group => <View key={group.id} style={{ gap: 8 }}>
       {editing === group.id ? <>
         <Input label="グループ名の変更" value={draft} set={setDraft} disabled={disabled} maxLength={30} />
