@@ -50,8 +50,12 @@ export default function TaskForm({ task, groups, defaultGroupId = null, initialD
     setGroupId(defaultGroupId);
   }
   return <View style={s.form}>
-    <Label>グループ</Label>
-    <GroupChips groups={groups} value={groupId} disabled={disabled} set={value => setGroupId(value === "all" ? null : value)} />
+    {/* 「未分類」ボタンは置かない。何も選ばなければ未分類で、選んだグループをもう一度押すと外せる */}
+    {!!groups.length && <>
+      <Label>グループ（選ばなければ未分類）</Label>
+      <GroupChips groups={groups} value={groupId} disabled={disabled} unclassified={false}
+        set={value => setGroupId(value === "all" || value === groupId ? null : value)} />
+    </>}
     <Input label="タスク名" hideLabel value={title} set={setTitle} placeholder="タスク名（例：レポートの下書き）" disabled={disabled} />
     <Label>かかる時間</Label>
     <Row>
@@ -77,7 +81,7 @@ export default function TaskForm({ task, groups, defaultGroupId = null, initialD
       })} />
       {cancel && <Button title="やめる" disabled={disabled} onPress={cancel} />}
     </Row>
-    {!task && !groups.length && <Hint>グループは一覧の「グループを変更」や「グループを管理」で作れます</Hint>}
+    {!task && !groups.length && <Hint>グループは、一覧でタスクを長押しして別のタスクに重ねるか、「グループを変更」「グループを管理」で作れます</Hint>}
   </View>;
 }
 
