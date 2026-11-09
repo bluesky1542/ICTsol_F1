@@ -27,8 +27,8 @@ export default function CalendarPanel({ disabled, run, changed, reload }: Props)
     const Calendar = await import("expo-calendar");
     let permission;
     try { permission = await Calendar.requestCalendarPermissions(); }
-    catch { throw new Error("端末カレンダーはExpo Goでは利用できません。開発ビルドで起動してください。"); }
-    if (!permission.granted) throw new Error("カレンダーの読み取りが許可されていません。端末設定で許可するか、予定を手入力してください。");
+    catch { throw new Error("Expo Goでは端末のカレンダーを使えません。開発ビルドで起動してください。"); }
+    if (!permission.granted) throw new Error("カレンダーへのアクセスが許可されていません。端末の設定で許可してください。");
     const list = await Calendar.getCalendars(Calendar.EntityTypes.EVENT);
     setCalendars(list.map(c => ({ id: c.id, title: c.title }))); setSelected([]);
     if (!list.length) throw new Error("読み取れるカレンダーがありません。");
@@ -50,15 +50,15 @@ export default function CalendarPanel({ disabled, run, changed, reload }: Props)
   async function manual() {
     const parse = (text: string, label: string) => {
       const value = parseLocalDateTime(text);
-      if (!value) throw new Error(`${label}は「2026-10-20 14:00」の形で、実在する日時を入力してください。`);
+      if (!value) throw new Error(`${label}は「2026-10-20 14:00」の形で入力してください。`);
       return value;
     };
     const from = new Date(), until = new Date(from.getTime() + 7 * 86400000);
     const begins = parse(start, "開始"), ends = parse(end, "終了");
-    if (ends <= begins) throw new Error("終了は開始より後の日時にしてください。");
-    if (ends <= from || begins >= until) throw new Error("追加できるのは、今から7日以内にかかる予定です。");
+    if (ends <= begins) throw new Error("終了は開始より後にしてください。");
+    if (ends <= from || begins >= until) throw new Error("追加できるのは今から7日以内の予定です。");
     update(await api<Snapshot>("/calendar/manual", "POST", { starts_at: begins.toISOString(), ends_at: ends.toISOString() })); setStart(""); setEnd("");
-    setManualMessage({ error: false, text: `予定を追加しました（${begins.toLocaleString("ja-JP")}〜）。` });
+    setManualMessage({ error: false, text: "予定を追加しました。" });
   }
   return <Card title="予定" right={snapshot.sync ? <Hint>{snapshot.events.length}件</Hint> : undefined}>
     <ScheduleCalendar snapshot={snapshot} />
@@ -82,13 +82,13 @@ export default function CalendarPanel({ disabled, run, changed, reload }: Props)
       {!!calendars.length && <Row>{calendars.map(c => <Button key={c.id} small title={`${selected.includes(c.id) ? "✓ " : ""}${c.title}`} selected={selected.includes(c.id)}
         disabled={disabled} onPress={() => setSelected(v => v.includes(c.id) ? v.filter(id => id !== c.id) : [...v, c.id])} />)}</Row>}
       {!!calendars.length && <>
-        <Hint warn>取り込むと、保存済みの予定（手入力も含む）が今後7日分で置き換わります。</Hint>
+        <Hint warn>保存済みの予定は置き換わります。</Hint>
         <Button primary title="取り込む" disabled={disabled || !selected.length} onPress={() => void run(sync)} /></>}
     </>}
 
     {snapshot.sync && <Hint>最終更新：{new Date(snapshot.sync.synced_at).toLocaleString("ja-JP")}</Hint>}
     {!!snapshot.sync && <Row>
-      <Button small title={confirmDelete ? "本当に削除する" : "保存した予定をすべて削除"} disabled={disabled}
+      <Button small title={confirmDelete ? "本当に削除" : "予定をすべて削除"} disabled={disabled}
         onPress={() => confirmDelete ? void run(async () => {
           await api("/calendar", "DELETE"); update({ sync: null, events: [] }); setSelected([]); setCalendars([]); setConfirmDelete(false);
         }) : setConfirmDelete(true)} />

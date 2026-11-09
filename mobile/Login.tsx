@@ -4,7 +4,7 @@ import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import Dashboard from "./Dashboard";
 import { api, onExpired, setSession } from "./api";
 import { isDemo } from "./demo";
-import { Button, Hint, Label } from "./ui";
+import { Button, Label } from "./ui";
 
 export default function Login() {
   const [user, setUser] = useState<{ id: number; username: string } | null>(null);
@@ -15,14 +15,14 @@ export default function Login() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   useEffect(() => {
-    onExpired(() => { setUser(null); setPassword(""); setConfirm(""); setError("ログインの有効期限が切れました。再ログインしてください。"); });
+    onExpired(() => { setUser(null); setPassword(""); setConfirm(""); setError("ログインの有効期限が切れました。ログインし直してください。"); });
     return () => onExpired(null);
   }, []);
   async function submit() {
     if (busy) return;
     setError("");
     if (!/^[a-zA-Z0-9_-]{3,40}$/.test(username.trim()) || password.length < 8 || password.length > 128) {
-      setError("ユーザー名は英数字・_・- の3〜40文字、パスワードは8〜128文字です。"); return;
+      setError("ユーザー名は英数字・_・- で3〜40文字、パスワードは8文字以上にしてください。"); return;
     }
     if (register && password !== confirm) { setError("確認用パスワードが一致しません。"); return; }
     setBusy(true);
@@ -40,16 +40,15 @@ export default function Login() {
   if (isDemo) return <Dashboard username="画面確認用デモ" logout={async () => { window.location.href = window.location.pathname; }} />;
   if (user) return <Dashboard key={user.id} username={user.username} logout={logout} />;
   return <SafeAreaProvider><SafeAreaView style={s.root}><ScrollView contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
-    <View style={s.card}><Text style={s.heading}>{register ? "アカウント作成" : "おかえりなさい"}</Text>
+    <View style={s.card}><Text style={s.heading}>{register ? "新規登録" : "ログイン"}</Text>
       <Label>ユーザー名</Label>
       <TextInput accessibilityLabel="ユーザー名" value={username} onChangeText={setUsername} autoCapitalize="none" autoCorrect={false} editable={!busy} maxLength={40} style={s.input} />
       <Label>パスワード</Label>
       <TextInput accessibilityLabel="パスワード" value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" editable={!busy} maxLength={128} style={s.input} />
       {register && <><Label>パスワード（確認）</Label><TextInput accessibilityLabel="パスワード（確認）" value={confirm} onChangeText={setConfirm} secureTextEntry editable={!busy} maxLength={128} style={s.input} /></>}
       {!!error && <Text accessibilityRole="alert" style={s.error}>{error}</Text>}
-      <Button primary title={busy ? "処理中…" : register ? "登録して始める" : "ログイン"} disabled={busy} onPress={() => void submit()} />
-      <Button title={register ? "ログインに戻る" : "新しいアカウントを作る"} disabled={busy} onPress={() => { setRegister(!register); setError(""); setPassword(""); setConfirm(""); }} />
-      {register && <Hint>ユーザー名は英数字・_・-の3〜40文字、パスワードは8文字以上</Hint>}
+      <Button primary title={busy ? "処理中…" : register ? "登録" : "ログイン"} disabled={busy} onPress={() => void submit()} />
+      <Button title={register ? "ログインに戻る" : "新規登録"} disabled={busy} onPress={() => { setRegister(!register); setError(""); setPassword(""); setConfirm(""); }} />
     </View>
   </ScrollView></SafeAreaView></SafeAreaProvider>;
 }
